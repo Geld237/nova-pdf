@@ -1,33 +1,41 @@
 name: Publier les applications
 
 # Crée une version GitHub avec les installeurs pour toutes les plateformes.
-# Déclenchement : pousser un tag « vX.Y.Z » (ex. git tag v0.3.0 && git push origin v0.3.0)
-# ou lancer le workflow à la main depuis l'onglet Actions.
+# Déclenchement automatique : quand la version de package.json change sur main
+# (une version « v<version> » qui n'existe pas encore est publiée).
+# Aussi : pousser un tag « vX.Y.Z », ou lancer le workflow à la main (onglet Actions).
 on:
   push:
+    branches: [main]
+    paths: ['package.json']
     tags: ['v*']
   workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Tag de la version (ex. v0.3.0)'
-        required: true
 
 permissions:
   contents: write
 
-env:
-  TAG: ${{ github.event.inputs.tag || github.ref_name }}
-
 jobs:
   create-release:
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.v.outputs.tag }}
+      created: ${{ steps.v.outputs.created }}
     steps:
       - uses: actions/checkout@v4
-      - name: Créer la version
+      - name: Créer la version si elle n'existe pas
+        id: v
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" \
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then TAG="$GITHUB_REF_NAME"; else TAG="v$(node -p "require('./package.json').version")"; fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "La version $TAG existe déjà : rien à publier."
+            echo "created=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "created=true" >> "$GITHUB_OUTPUT"
+          gh release create "$TAG" --target "$GITHUB_SHA" \
             --title "Nova PDF $TAG" \
             --notes "## Télécharger
 
@@ -44,6 +52,9 @@ jobs:
 
   desktop:
     needs: create-release
+    if: needs.create-release.outputs.created == 'true'
+    env:
+      TAG: ${{ needs.create-release.outputs.tag }}
     strategy:
       fail-fast: false
       matrix:
@@ -91,6 +102,9 @@ jobs:
 
   android:
     needs: create-release
+    if: needs.create-release.outputs.created == 'true'
+    env:
+      TAG: ${{ needs.create-release.outputs.tag }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -140,6 +154,9 @@ jobs:
 
   ios:
     needs: create-release
+    if: needs.create-release.outputs.created == 'true'
+    env:
+      TAG: ${{ needs.create-release.outputs.tag }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4

@@ -139,9 +139,9 @@ Toutes les versions partagent le même code : l'application de bureau utilise [T
 ### Publier une nouvelle version
 
 ```bash
-npm version 0.4.0 --no-git-tag-version   # change la version
+npm version 0.4.0 --no-git-tag-version   # change la version (déclenche la publication)
 node scripts/sync-version.mjs            # la recopie dans Android, iOS et Tauri
-git commit -am "v0.4.0" && git tag v0.4.0 && git push && git push origin v0.4.0
+git commit -am "v0.4.0" && git push
 ```
 Le workflow **Publier les applications** crée la version GitHub et y ajoute tous les installeurs (≈ 20 min). Les applications installées le signalent dans **ⓘ Infos → Mises à jour**.
 
