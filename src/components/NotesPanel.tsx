@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { allNotes, loadNotes, saveNotes, type DocNotes } from '../memory';
 import { baseName, download } from '../pdf/tools';
 import type { Annotation } from '../types';
+import { listen, speechSupported } from '../voice';
 
 interface Props {
   fingerprint: string;
@@ -19,6 +20,9 @@ export function NotesPanel(p: Props) {
   const [saved, setSaved] = useState(true);
   const [others, setOthers] = useState<DocNotes[]>([]);
   const ta = useRef<HTMLTextAreaElement>(null);
+  const stopDictation = useRef<(() => void) | null>(null);
+  const [dictating, setDictating] = useState(false);
+  const [interim, setInterim] = useState('');
 
   // chargement + rechargement quand l'IA ajoute un bloc
   useEffect(() => {
@@ -114,6 +118,35 @@ export function NotesPanel(p: Props) {
           <button onClick={importHighlights}>Importer mes surlignages</button>
           <button onClick={() => insert(`### ${now}\n`)}>🕑 Date</button>
           <button onClick={() => insert('- [ ] ')}>☐ Tâche</button>
+          {speechSupported() && (
+            <button
+              className={dictating ? 'active' : ''}
+              title="Dictée (la reconnaissance vocale du navigateur peut passer par un service en ligne)"
+              onClick={() => {
+                if (dictating) {
+                  stopDictation.current?.();
+                  return;
+                }
+                setDictating(true);
+                stopDictation.current = listen({
+                  continuous: true,
+                  onText: (t, final) => {
+                    if (final) {
+                      setInterim('');
+                      setText((x) => `${x}${x && !/\s$/.test(x) ? ' ' : ''}${t.trim()}`);
+                    } else setInterim(t);
+                  },
+                  onEnd: () => {
+                    setDictating(false);
+                    setInterim('');
+                  },
+                  onError: (e) => alert(e),
+                });
+              }}
+            >
+              🎙 {dictating ? 'Arrêter la dictée' : 'Dicter'}
+            </button>
+          )}
         </div>
       )}
 
@@ -126,6 +159,7 @@ export function NotesPanel(p: Props) {
           onChange={(e) => setText(e.target.value)}
         />
       )}
+      {interim && <p className="muted">🎙 {interim}…</p>}
       {mode === 'preview' && (
         <div className="notes-preview">
           {text.trim() ? <MiniMarkdown text={text} goTo={p.goTo} onToggle={setText} /> : <p className="empty">Rien à afficher.</p>}

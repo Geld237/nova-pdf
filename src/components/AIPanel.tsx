@@ -1,6 +1,6 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { chat, listOllamaModels, WEBLLM_MODELS, webGpuAvailable, type AiSettings, type ChatMessage } from '../ai/llm';
-import { Bm25Index, chunkPages } from '../ai/retrieval';
+import { Bm25Index, chunkPages, type Chunk } from '../ai/retrieval';
 import { saveSetting } from '../memory';
 import type { Annotation, PageText } from '../types';
 
@@ -17,7 +17,18 @@ interface Props {
   setSettings: (s: AiSettings) => void;
   goTo: (p: number) => void;
   onToNotes: (text: string) => void;
+  /** Documents pour les questions multi-documents (onglets ouverts ou bibliothèque). */
+  corpus: (scope: 'tabs' | 'library') => Promise<CorpusDoc[]>;
+  openAt: (docId: string, page: number) => void;
 }
+
+export interface CorpusDoc {
+  id: string;
+  name: string;
+  texts: PageText[];
+}
+
+type Scope = 'doc' | 'tabs' | 'library';
 
 const SYSTEM =
   "Tu es l'assistant de lecture de Nova PDF. Tu réponds dans la langue de l'utilisateur, de façon précise et concise. " +
@@ -36,6 +47,27 @@ export function AIPanel(p: Props) {
   const [lang, setLang] = useState('anglais');
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
   const abort = useRef<AbortController | null>(null);
+  const [scope, setScope] = useState<Scope>('doc');
+  const [docs, setDocs] = useState<CorpusDoc[]>([]);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (scope === 'doc') return;
+    p.corpus(scope).then((d) => {
+      setDocs(d);
+      setSelected(new Set(d.slice(0, 8).map((x) => x.id)));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope]);
+  const active = docs.filter((d) => selected.has(d.id));
+  const multiIndex = useMemo(() => {
+    if (scope === 'doc' || !active.length) return null;
+    const chunks: (Chunk & { doc: number })[] = [];
+    active.forEach((d, k) => chunkPages(d.texts).forEach((c) => chunks.push({ ...c, id: chunks.length, doc: k })));
+    return new Bm25Index(chunks);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope, docs, selected]);
+  const legend = active.map((d, k) => `D${k + 1} = « ${d.name} »`).join('\n');
 
   const index = useMemo(() => (p.texts ? new Bm25Index(chunkPages(p.texts)) : null), [p.texts]);
   const totalChars = p.texts?.reduce((n, t) => n + t.text.length, 0) ?? 0;
@@ -159,8 +191,78 @@ export function AIPanel(p: Props) {
     ]);
   };
 
+  const MULTI_SYSTEM =
+    "Tu es l'assistant de recherche de Nova PDF. Tu compares et croises plusieurs documents. Réponds dans la langue de l'utilisateur. " +
+    "Appuie-toi uniquement sur les extraits fournis et cite chaque affirmation sous la forme [D2, p. 4] (document, page). " +
+    "Signale clairement les contradictions et les différences entre documents.";
+
+  const askMulti = async (q: string) => {
+    if (!multiIndex) return;
+    const ctx = multiIndex.search(q, 10) as (Chunk & { doc: number })[];
+    // au moins un extrait par document si possible
+    for (let k = 0; k < active.length; k++)
+      if (!ctx.some((c) => c.doc === k)) {
+        const first = (multiIndex.chunks as (Chunk & { doc: number })[]).find((c) => c.doc === k);
+        if (first) ctx.push(first);
+      }
+    let used = 0;
+    const extracts = ctx
+      .filter((c) => (used += Math.min(c.text.length, 700)) <= BUDGET + 600)
+      .map((c) => `[D${c.doc + 1}, p. ${c.page + 1}]\n${c.text.slice(0, 700)}`)
+      .join('\n---\n');
+    await run(q, [
+      { role: 'system', content: MULTI_SYSTEM },
+      { role: 'user', content: `Documents :\n${legend}\n\nExtraits :\n${extracts}\n\nQuestion : ${q}` },
+    ]);
+  };
+
+  /** Analyse document par document puis synthèse (comparaison de contrats, revue de littérature). */
+  const crossAnalysis = async (kind: 'contracts' | 'review') => {
+    if (active.length < 2) {
+      setError('Sélectionnez au moins deux documents.');
+      return;
+    }
+    const grid =
+      kind === 'contracts'
+        ? 'parties, objet, durée et date d’effet, prix et modalités de paiement, résiliation et préavis, responsabilité et garanties, confidentialité, pénalités, clauses inhabituelles'
+        : 'question / objectif, méthode, échantillon ou données, principaux résultats, limites, apport';
+    setMsgs((m) => [...m, { role: 'user', content: kind === 'contracts' ? `Comparer ${active.length} contrats` : `Revue de littérature (${active.length} documents)` }]);
+    const parts: string[] = [];
+    for (let k = 0; k < active.length; k++) {
+      const d = active[k];
+      let text = '';
+      for (const t of d.texts) {
+        if (text.length > BUDGET) break;
+        text += `[p. ${t.page + 1}] ${t.text}\n`;
+      }
+      const out = await run(`D${k + 1} — ${d.name}`, [
+        { role: 'system', content: SYSTEM },
+        { role: 'user', content: `Document « ${d.name} » :\n${text.slice(0, BUDGET)}\n\nExtrais en puces courtes : ${grid}. Cite les pages. Écris « non précisé » si absent.` },
+      ], true);
+      if (!out) return;
+      parts.push(`D${k + 1} « ${d.name} » :\n${out}`);
+    }
+    await run('Synthèse comparative', [
+      { role: 'system', content: MULTI_SYSTEM },
+      {
+        role: 'user',
+        content: `${parts.join('\n\n').slice(0, BUDGET * 1.4)}\n\n${
+          kind === 'contracts'
+            ? 'Fais un tableau Markdown comparant les contrats ligne par ligne (une colonne par document), puis liste les différences importantes et les points de vigilance.'
+            : 'Fais un tableau Markdown de synthèse (une ligne par document), puis rédige une synthèse : convergences, divergences, lacunes de la littérature.'
+        }`,
+      },
+    ], true);
+  };
+
   const ask = async () => {
     const q = input.trim();
+    if (scope !== 'doc') {
+      if (!q) return;
+      setInput('');
+      await askMulti(q);
+      return;
+    }
     if (!q || !index) return;
     setInput('');
     let ctx = index.search(q, 6);
@@ -187,6 +289,36 @@ export function AIPanel(p: Props) {
         </button>
       </header>
       <p className="privacy">🔒 Tout reste sur votre appareil : aucun texte n'est envoyé sur Internet.</p>
+
+      <div className="seg">
+        <button className={scope === 'doc' ? 'active' : ''} onClick={() => setScope('doc')}>Ce document</button>
+        <button className={scope === 'tabs' ? 'active' : ''} onClick={() => setScope('tabs')}>Onglets ouverts</button>
+        <button className={scope === 'library' ? 'active' : ''} onClick={() => setScope('library')}>Bibliothèque</button>
+      </div>
+      {scope !== 'doc' && (
+        <div className="corpus">
+          {docs.length === 0 && <p className="muted">Aucun document {scope === 'tabs' ? 'ouvert' : 'dans la bibliothèque'}.</p>}
+          {docs.map((d) => (
+            <label key={d.id} className="check">
+              <input
+                type="checkbox"
+                checked={selected.has(d.id)}
+                onChange={(e) => {
+                  const n = new Set(selected);
+                  if (e.target.checked) n.add(d.id);
+                  else n.delete(d.id);
+                  setSelected(n);
+                }}
+              />
+              <b>D{active.findIndex((a) => a.id === d.id) + 1 || '–'}</b> {d.name} <small className="muted">({d.texts.length} p.)</small>
+            </label>
+          ))}
+          <div className="row">
+            <button disabled={busy || active.length < 2} onClick={() => crossAnalysis('contracts')}>Comparer (contrats)</button>
+            <button disabled={busy || active.length < 2} onClick={() => crossAnalysis('review')}>Revue de littérature</button>
+          </div>
+        </div>
+      )}
 
       {showSettings && (
         <div className="ai-settings">
@@ -241,7 +373,7 @@ export function AIPanel(p: Props) {
         </div>
       )}
 
-      <div className="ai-actions">
+      <div className="ai-actions" style={{ display: scope === 'doc' ? undefined : 'none' }}>
         <button disabled={busy || !p.texts} onClick={summarizeDoc}>Résumer le document</button>
         <button disabled={busy || !p.texts} onClick={() => pageAction('Résume cette page en 3 à 5 puces.', `Résume la page ${p.currentPage + 1}`)}>
           Résumer la page
@@ -282,7 +414,7 @@ export function AIPanel(p: Props) {
         )}
         {msgs.map((m, i) => (
           <div key={i} className={`msg ${m.role}`}>
-            <Cited text={m.content || '…'} goTo={p.goTo} />
+            <Cited text={m.content || '…'} goTo={p.goTo} openDoc={(k, page) => active[k] && p.openAt(active[k].id, page)} />
             {m.role === 'assistant' && m.content && !(busy && i === msgs.length - 1) && (
               <div className="msg-actions">
                 <button className="link" onClick={() => p.onToNotes(m.content)}>→ Ajouter aux notes</button>
@@ -302,7 +434,7 @@ export function AIPanel(p: Props) {
       >
         <textarea
           rows={2}
-          placeholder={p.texts ? 'Votre question sur le document…' : 'Indexation…'}
+          placeholder={scope !== 'doc' ? 'Votre question sur ces documents…' : p.texts ? 'Votre question sur le document…' : 'Indexation…'}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
@@ -317,7 +449,7 @@ export function AIPanel(p: Props) {
             Stop
           </button>
         ) : (
-          <button type="submit" disabled={!input.trim() || !p.texts}>
+          <button type="submit" disabled={!input.trim() || (scope === 'doc' ? !p.texts : !active.length)}>
             Envoyer
           </button>
         )}
@@ -327,14 +459,14 @@ export function AIPanel(p: Props) {
 }
 
 /** Rend les citations [p. N] cliquables. */
-function Cited({ text, goTo }: { text: string; goTo: (p: number) => void }) {
-  const parts = text.split(/(\[p\.?\s*\d+(?:\s*[-–,]\s*\d+)*\])/gi);
+function Cited({ text, goTo, openDoc }: { text: string; goTo: (p: number) => void; openDoc: (doc: number, page: number) => void }) {
+  const parts = text.split(/(\[(?:D\d+\s*,\s*)?p\.?\s*\d+(?:\s*[-–,]\s*\d+)*\])/gi);
   return (
     <div className="cited">
       {parts.map((part, i) => {
-        const m = part.match(/\[p\.?\s*(\d+)/i);
+        const m = part.match(/\[(?:D(\d+)\s*,\s*)?p\.?\s*(\d+)/i);
         return m ? (
-          <button key={i} className="cite" onClick={() => goTo(parseInt(m[1], 10) - 1)}>
+          <button key={i} className="cite" onClick={() => (m[1] ? openDoc(+m[1] - 1, +m[2] - 1) : goTo(parseInt(m[2], 10) - 1))}>
             {part}
           </button>
         ) : (

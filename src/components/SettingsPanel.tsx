@@ -9,6 +9,7 @@ import {
   fetchLatestRelease, isNewer, onUpdateState, updateState, type ReleaseInfo, type RemoteVersion,
 } from '../update';
 import { isNative, platformName } from '../platform';
+import { PROFILE_LABELS, loadProfile, saveProfile, type Profile } from '../profile';
 
 interface DocInfo {
   name: string;
@@ -35,7 +36,7 @@ const SHORTCUTS: [string, string][] = [
 ];
 
 export function SettingsPanel({ doc, settings, setSettings, notify }: Props) {
-  const [tab, setTab] = useState<'info' | 'settings' | 'updates' | 'data' | 'about'>(doc ? 'info' : 'settings');
+  const [tab, setTab] = useState<'info' | 'settings' | 'profile' | 'updates' | 'data' | 'about'>(doc ? 'info' : 'settings');
   const set = <K extends keyof AppSettings>(k: K, v: AppSettings[K]) => setSettings({ ...settings, [k]: v });
 
   return (
@@ -48,6 +49,7 @@ export function SettingsPanel({ doc, settings, setSettings, notify }: Props) {
           [
             ['info', 'Document'],
             ['settings', 'Paramètres'],
+            ['profile', 'Profil'],
             ['updates', 'Mises à jour'],
             ['data', 'Données'],
             ['about', 'À propos'],
@@ -127,6 +129,7 @@ export function SettingsPanel({ doc, settings, setSettings, notify }: Props) {
         </div>
       )}
 
+      {tab === 'profile' && <ProfileView notify={notify} />}
       {tab === 'updates' && <Updates notify={notify} />}
       {tab === 'data' && <DataView notify={notify} />}
       {tab === 'about' && <About />}
@@ -328,6 +331,22 @@ function ReleaseAssets({ release }: { release: ReleaseInfo }) {
         </li>
       ))}
     </ul>
+  );
+}
+
+function ProfileView({ notify }: { notify: (m: string) => void }) {
+  const [p, setP] = useState<Profile>(loadProfile);
+  return (
+    <div className="col">
+      <p className="muted">Utilisé par « ✨ Remplir avec mon profil » dans les formulaires. Conservé uniquement sur cet appareil.</p>
+      {(Object.keys(PROFILE_LABELS) as (keyof Profile)[]).map((k) => (
+        <label key={k}>
+          {PROFILE_LABELS[k]}
+          <input value={p[k]} onChange={(e) => setP({ ...p, [k]: e.target.value })} type={k === 'email' ? 'email' : 'text'} />
+        </label>
+      ))}
+      <button className="primary" onClick={() => { saveProfile(p); notify('Profil enregistré.'); }}>Enregistrer le profil</button>
+    </div>
   );
 }
 

@@ -1,8 +1,22 @@
 import { useEffect, useState } from 'react';
 import type { PageText } from '../types';
+import type { AiSettings } from '../ai/llm';
+import { Podcast } from './Podcast';
+
+interface Extra {
+  ai: AiSettings;
+  docName: string;
+  onToNotes: (t: string) => void;
+  onTranslate: () => void;
+  onPresent: () => void;
+  dyslexia: boolean;
+  ruler: boolean;
+  setDyslexia: (v: boolean) => void;
+  setRuler: (v: boolean) => void;
+}
 
 /** Mode lecture : texte remis en forme (reflow) + lecture à voix haute. */
-export function ReadingPanel({ texts, currentPage, goTo }: { texts: PageText[] | null; currentPage: number; goTo: (p: number) => void }) {
+export function ReadingPanel({ texts, currentPage, goTo, ...x }: { texts: PageText[] | null; currentPage: number; goTo: (p: number) => void } & Extra) {
   const [size, setSize] = useState(17);
   const [serif, setSerif] = useState(true);
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
@@ -61,6 +75,20 @@ export function ReadingPanel({ texts, currentPage, goTo }: { texts: PageText[] |
       <header className="panel-head">
         <h2>Mode lecture</h2>
       </header>
+      <div className="col">
+        <button onClick={x.onTranslate} disabled={!texts}>🌐 Traduction côte à côte du document</button>
+        <button onClick={x.onPresent}>▶ Mode présentation (plein écran, laser)</button>
+      </div>
+      <details>
+        <summary>Confort de lecture</summary>
+        <label className="check">
+          <input type="checkbox" checked={x.dyslexia} onChange={(e) => x.setDyslexia(e.target.checked)} /> Police adaptée à la dyslexie (OpenDyslexic)
+        </label>
+        <label className="check">
+          <input type="checkbox" checked={x.ruler} onChange={(e) => x.setRuler(e.target.checked)} /> Règle de lecture (masque au-dessus et au-dessous de la ligne)
+        </label>
+      </details>
+      <Podcast texts={texts} ai={x.ai} docName={x.docName} onToNotes={x.onToNotes} />
       {tts ? (
         <div className="tts">
           <div className="row">
@@ -106,7 +134,7 @@ export function ReadingPanel({ texts, currentPage, goTo }: { texts: PageText[] |
           <input type="checkbox" checked={serif} onChange={(e) => setSerif(e.target.checked)} /> Police à empattements
         </label>
       </div>
-      <article className="reflow" style={{ fontSize: size, fontFamily: serif ? 'Georgia, "Times New Roman", serif' : undefined }}>
+      <article className="reflow" style={{ fontSize: size, fontFamily: x.dyslexia ? 'OpenDyslexic, sans-serif' : serif ? 'Georgia, "Times New Roman", serif' : undefined, letterSpacing: x.dyslexia ? '0.03em' : undefined, wordSpacing: x.dyslexia ? '0.12em' : undefined }}>
         <h3>Page {currentPage + 1}</h3>
         {!texts && <p>Extraction du texte…</p>}
         {texts && !paragraphs.length && <p className="muted">Pas de texte sur cette page (scan ? lancez l'OCR).</p>}

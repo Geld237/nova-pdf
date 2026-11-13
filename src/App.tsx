@@ -8,6 +8,19 @@ import { DEFAULT_SETTINGS, appendNote, loadMemory, loadSetting, saveMemory, save
 import { STAMP_PRESETS, makeStamp } from './stamps';
 import { applyAppUpdate, checkForAppUpdate, onUpdateState, updateState } from './update';
 import { NotesPanel } from './components/NotesPanel';
+import { LibraryPanel } from './components/LibraryPanel';
+import { StudyPanel } from './components/StudyPanel';
+import { SharePanel } from './components/SharePanel';
+import { TranslateView } from './components/TranslateView';
+import { Presentation } from './components/Presentation';
+import { ScanModal } from './components/ScanModal';
+import { addToLibrary, getLibFile, getLibText, listLibrary, saveLibText, updateLibItem, type LibItem } from './library';
+import { extractReferences, refMap } from './refs';
+import { listen, parseCommand, speechSupported } from './voice';
+import { session } from './p2p';
+import { listSigRequests } from './pdf/sigreq';
+import { allDecks, dueCards } from './study';
+import type { CorpusDoc } from './components/AIPanel';
 import { SettingsPanel } from './components/SettingsPanel';
 import { DEFAULT_AI, type AiSettings } from './ai/llm';
 import { makeDemoPdf } from './demo';
@@ -38,11 +51,12 @@ interface DocState {
   dirty: boolean;
   handle?: FileSystemFileHandle;
   path?: string; // chemin natif (application de bureau)
+  review?: boolean; // partagé en relecture avec l'appareil connecté
   startPage: number;
   encrypted: boolean;
 }
 
-type Panel = 'ai' | 'notes' | 'reading' | 'form' | 'organize' | 'tools' | 'settings' | null;
+type Panel = 'ai' | 'notes' | 'study' | 'reading' | 'form' | 'organize' | 'tools' | 'library' | 'share' | 'settings' | null;
 type SideTab = 'pages' | 'outline' | 'search' | 'annotations' | 'notebook';
 
 const TOOLS: { id: ToolId; icon: string; label: string; key?: string }[] = [
@@ -94,7 +108,15 @@ export default function App() {
     measureRatio: 1,
     measureUnit: 'cm',
     stamp: null,
+    signer: '',
   }));
+  const [presenting, setPresenting] = useState(false);
+  const [translating, setTranslating] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [voiceOn, setVoiceOn] = useState(false);
+  const [voiceHeard, setVoiceHeard] = useState('');
+  const stopVoice = useRef<(() => void) | null>(null);
+  const sigResolver = useRef<((s: string | null) => void) | null>(null);
   const [signature, setSignature] = useState<string | null>(null);
   const [sigModal, setSigModal] = useState(false);
   const [sidebar, setSidebar] = useState(true);
@@ -109,6 +131,10 @@ export default function App() {
   const viewer = useRef<ViewerHandle>(null);
 
   const doc = docs.find((d) => d.id === activeId) ?? null;
+  const docsRef = useRef<DocState[]>([]);
+  docsRef.current = docs;
+  const docRef = useRef<DocState | null>(null);
+  docRef.current = doc;
 
   const notify = useCallback((msg: string) => {
     setToast(msg);
@@ -122,7 +148,8 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = dark ? 'dark' : 'light';
-  }, [dark]);
+    document.documentElement.classList.toggle('dyslexic', !!settings.dyslexia);
+  }, [dark, settings.dyslexia]);
   useEffect(() => {
     const mq = matchMedia?.('(prefers-color-scheme: dark)');
     const h = () => setSysDark(mq.matches);
@@ -146,7 +173,14 @@ export default function App() {
 
   // ----- Ouverture -----------------------------------------------------------
   const loadInto = useCallback(
-    async (bytes: Uint8Array, name: string, existingId?: string, handle?: FileSystemFileHandle, path?: string) => {
+    async (
+      bytes: Uint8Array,
+      name: string,
+      existingId?: string,
+      handle?: FileSystemFileHandle,
+      path?: string,
+      opts?: { startPage?: number; annotations?: Annotation[]; review?: boolean; forceNew?: boolean },
+    ): Promise<string | undefined> => {
       let pdf: PDFDocumentProxy;
       let encrypted = false;
       try {
@@ -181,23 +215,41 @@ export default function App() {
           bytes, pdf, sizes, outline, texts: null, version: d.version + 1, annotations: [], undo: [], redo: [], dirty: true,
         }));
         extractAllText(pdf).then((texts) => patchDoc(existingId, { texts }));
-        return;
+        const prev = docsRef.current.find((x) => x.id === existingId);
+        if (prev && settings.autoLibrary) addToLibrary({ id: prev.fingerprint, name: prev.name, size: bytes.length, pages: pdf.numPages }, bytes);
+        return existingId;
+      }
+      // déjà ouvert dans un onglet ?
+      const already = opts?.review || opts?.forceNew ? undefined : docsRef.current.find((d) => d.fingerprint === fingerprint);
+      if (already) {
+        setActiveId(already.id);
+        if (opts?.startPage !== undefined) setTimeout(() => viewer.current?.scrollToPage(opts.startPage!), 200);
+        return already.id;
       }
       const mem = await loadMemory(fingerprint);
       const id = uid();
       const state: DocState = {
         id, name, bytes, pdf, version: 0, sizes, outline, texts: null, fingerprint,
-        annotations: settings.rememberAnnotations ? mem?.annotations ?? [] : [], undo: [], redo: [], dirty: false, handle, path,
-        startPage: settings.resumeLastPage ? mem?.lastPage ?? 0 : 0, encrypted,
+        annotations: opts?.annotations ?? (settings.rememberAnnotations ? mem?.annotations ?? [] : []), undo: [], redo: [], dirty: false, handle, path,
+        startPage: opts?.startPage ?? (settings.resumeLastPage ? mem?.lastPage ?? 0 : 0), encrypted, review: opts?.review,
       };
       setDocs((ds) => [...ds, state]);
       setActiveId(id);
       setPage(state.startPage);
       if (settings.rememberAnnotations && mem?.annotations.length) notify(`${mem.annotations.length} annotation(s) retrouvée(s) pour ce document.`);
-      extractAllText(pdf).then((texts) => patchDoc(id, { texts }));
+      extractAllText(pdf).then((texts) => {
+        patchDoc(id, { texts });
+        if (settings.autoLibrary) saveLibText(fingerprint, texts);
+      });
+      if (settings.autoLibrary) addToLibrary({ id: fingerprint, name, size: bytes.length, pages: pdf.numPages }, bytes);
+      // demande de signature en attente ?
+      listSigRequests(bytes)
+        .then((r) => r.requests.length && notify(`✍ Ce document attend ${r.requests.length} signature(s) : panneau Partager → Signatures.`))
+        .catch(() => {});
+      return id;
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [notify, patchDoc, settings.rememberAnnotations, settings.resumeLastPage],
+    [notify, patchDoc, settings.rememberAnnotations, settings.resumeLastPage, settings.autoLibrary],
   );
 
   const openFiles = useCallback(
@@ -298,8 +350,62 @@ export default function App() {
     },
     [activeId, patchDoc],
   );
-  const onAdd = useCallback((a: Annotation) => setAnns((l) => [...l, a]), [setAnns]);
-  const onDelete = useCallback((id: string) => setAnns((l) => l.filter((a) => a.id !== id)), [setAnns]);
+  const onAdd = useCallback(
+    (a: Annotation) => {
+      setAnns((l) => [...l, a]);
+      const d = docRef.current;
+      if (d?.review) session.peer?.send({ type: 'ann-add', fp: d.fingerprint, ann: a });
+    },
+    [setAnns],
+  );
+  const onDelete = useCallback(
+    (id: string) => {
+      setAnns((l) => l.filter((a) => a.id !== id));
+      const d = docRef.current;
+      if (d?.review) session.peer?.send({ type: 'ann-del', fp: d.fingerprint, id });
+    },
+    [setAnns],
+  );
+  const addAnnotations = useCallback((list: Annotation[]) => setAnns((l) => [...l, ...list]), [setAnns]);
+
+  // Messages de l'appareil connecté : relecture partagée, documents à signer
+  useEffect(() => {
+    let off: (() => void) | undefined;
+    const attach = () => {
+      off?.();
+      off = session.peer?.on(async (m) => {
+        if (m.type === 'review-open' || m.type === 'sig-file') {
+          await loadInto(m.bytes as Uint8Array, String(m.name), undefined, undefined, undefined, {
+            annotations: (m.annotations as Annotation[]) ?? undefined,
+            review: m.type === 'review-open',
+            forceNew: true,
+            startPage: 0,
+          });
+          notify(m.type === 'review-open' ? `Relecture partagée : « ${m.name} »` : `Document reçu : « ${m.name} »`);
+        } else if (m.type === 'ann-add' || m.type === 'ann-del') {
+          setDocs((ds) =>
+            ds.map((d) =>
+              d.fingerprint !== m.fp
+                ? d
+                : {
+                    ...d,
+                    annotations:
+                      m.type === 'ann-add'
+                        ? d.annotations.some((x) => x.id === (m.ann as Annotation).id) ? d.annotations : [...d.annotations, m.ann as Annotation]
+                        : d.annotations.filter((x) => x.id !== m.id),
+                  },
+            ),
+          );
+        }
+      }) as (() => void) | undefined;
+    };
+    attach();
+    session.listeners.add(attach);
+    return () => {
+      off?.();
+      session.listeners.delete(attach);
+    };
+  }, [loadInto, notify]);
   const undo = () =>
     doc?.undo.length &&
     patchDoc(doc.id, (d) => ({ annotations: d.undo[d.undo.length - 1], undo: d.undo.slice(0, -1), redo: [...d.redo, d.annotations] }));
@@ -404,12 +510,127 @@ export default function App() {
           await loadInto(bytes, doc.name, doc.id);
           notify(label);
         },
-        openNew: (bytes, name) => loadInto(bytes, name),
+        openNew: (bytes, name) => void loadInto(bytes, name),
         notify,
         outline: doc.outline,
         ocrLang: settings.ocrLang,
+        ai,
+        addAnnotations,
+        getBytesRaw: async () => doc.bytes,
+        markReview: () => patchDoc(doc.id, { review: true }),
+        startScan: () => setScanning(true),
       }
     : null;
+
+  // ----- Bibliothèque et documents multiples -------------------------------
+  const openFromLibrary = useCallback(
+    async (id: string, startPage?: number) => {
+      const open = docsRef.current.find((d) => d.fingerprint === id);
+      if (open) {
+        setActiveId(open.id);
+        if (startPage !== undefined) setTimeout(() => viewer.current?.scrollToPage(startPage), 150);
+        return;
+      }
+      const bytes = await getLibFile(id);
+      const meta = (await listLibrary()).find((i) => i.id === id);
+      if (!bytes || !meta) {
+        notify('Document introuvable dans la bibliothèque.');
+        return;
+      }
+      await loadInto(bytes, meta.name, undefined, undefined, undefined, { startPage });
+      updateLibItem(id, { openedAt: Date.now() });
+    },
+    [loadInto, notify],
+  );
+
+  const corpus = useCallback(async (scope: 'tabs' | 'library'): Promise<CorpusDoc[]> => {
+    if (scope === 'tabs')
+      return Promise.all(
+        docsRef.current.map(async (d) => ({ id: d.fingerprint, name: d.name, texts: d.texts ?? (await extractAllText(d.pdf)) })),
+      );
+    const items = await listLibrary();
+    const out: CorpusDoc[] = [];
+    for (const i of items) {
+      const texts = await getLibText(i.id);
+      if (texts?.length) out.push({ id: i.id, name: i.name, texts });
+    }
+    return out;
+  }, []);
+
+  const refs = useMemo(() => (doc?.texts ? refMap(extractReferences(doc.texts)) : null), [doc?.texts]);
+
+  const pickSignature = () =>
+    new Promise<string | null>((res) => {
+      sigResolver.current = res;
+      setSigModal(true);
+    });
+
+  // ----- Commandes vocales ----------------------------------------------------
+  const runVoice = (text: string) => {
+    const a = parseCommand(text);
+    if (!a) return notify(`🎙 « ${text} » : commande non reconnue`);
+    const d = docRef.current;
+    switch (a.type) {
+      case 'next': return goTo(Math.min(page + 1, (d?.sizes.length ?? 1) - 1));
+      case 'prev': return goTo(Math.max(page - 1, 0));
+      case 'page': return goTo(a.n - 1);
+      case 'first': return goTo(0);
+      case 'last': return goTo((d?.sizes.length ?? 1) - 1);
+      case 'zoomIn': return zoom(1.2);
+      case 'zoomOut': return zoom(1 / 1.2);
+      case 'fit': return setFit('width');
+      case 'tool': return setTool(a.tool as ToolId);
+      case 'search': setSidebar(true); setSideTab('search'); return setQuery(a.q);
+      case 'panel': return setPanel(a.panel as Panel);
+      case 'read': return setPanel('reading');
+      case 'stop': return speechSynthesis?.cancel();
+      case 'save': return save();
+      case 'night': return setNight((n) => !n);
+      case 'present': return setPresenting(true);
+      case 'note':
+        if (d) appendNote(d.fingerprint, d.name, `- 🎙 ${a.text} [p. ${page + 1}]`).then(() => notify('Note ajoutée.'));
+        return;
+      case 'ask': setPanel('ai'); return notify(`Question : ${a.q} — tapez Entrée dans le panneau IA`);
+    }
+  };
+
+  const toggleVoice = () => {
+    if (voiceOn) {
+      stopVoice.current?.();
+      return;
+    }
+    setVoiceOn(true);
+    stopVoice.current = listen({
+      continuous: true,
+      onText: (t, final) => {
+        setVoiceHeard(t);
+        if (final) {
+          runVoice(t.trim());
+          setTimeout(() => setVoiceHeard(''), 1500);
+        }
+      },
+      onEnd: () => {
+        setVoiceOn(false);
+        setVoiceHeard('');
+      },
+      onError: (e) => notify(e),
+    });
+  };
+
+  // Raccourcis de l'application (icône, menu « Ouvrir avec »…) : ?action=scan|library|study
+  useEffect(() => {
+    const a = new URLSearchParams(location.search).get('action');
+    if (a === 'scan') setScanning(true);
+    else if (a === 'library') setPanel('library');
+    else if (a === 'study')
+      allDecks().then(async (ds) => {
+        const d = ds.find((x) => dueCards(x).length);
+        if (d) {
+          await openFromLibrary(d.fingerprint);
+          setPanel('study');
+        }
+      });
+  }, []);
 
   // ----- Raccourcis clavier -----------------------------------------------------
   useEffect(() => {
@@ -564,6 +785,12 @@ export default function App() {
           </>
         )}
         <span className="spacer" />
+        {speechSupported() && (
+          <button className={`icon ${voiceOn ? 'active rec' : ''}`} onClick={toggleVoice} title="Commandes vocales : « page suivante », « page 12 », « cherche … », « note … »">
+            🎙
+          </button>
+        )}
+        {voiceHeard && <span className="voice-heard">« {voiceHeard} »</span>}
         {updateReady && (
           <button className="primary" onClick={applyAppUpdate} title="Une nouvelle version est prête">
             ↻ Mettre à jour
@@ -645,6 +872,10 @@ export default function App() {
                 </select>
                 <button className={`icon ${night ? 'active' : ''}`} onClick={() => setNight(!night)} title="Mode nuit (inverse les couleurs des pages)">◐</button>
                 <button className="icon" onClick={() => setFocus(!focus)} title="Mode concentration (F)">⛶</button>
+                <button className="icon" onClick={() => setPresenting(true)} title="Présenter (plein écran, pointeur laser)">▶</button>
+                <button className="icon" disabled={!doc.texts} onClick={() => setTranslating(true)} title="Traduction côte à côte">🌐</button>
+                <button className={`icon ${settings.readingRuler ? 'active' : ''}`} onClick={() => setSettings({ ...settings, readingRuler: !settings.readingRuler })} title="Règle de lecture">═</button>
+                {doc.review && <span className="ok-badge">● relecture partagée</span>}
               </div>
               <Viewer
                 ref={viewer}
@@ -662,17 +893,27 @@ export default function App() {
                 onAdd={onAdd}
                 onDelete={onDelete}
                 onPageChange={setPage}
+                refs={refs}
+                ruler={settings.readingRuler}
               />
             </>
           ) : (
             <Welcome
               onOpen={openDialog}
-              onDemo={async () => loadInto(await makeDemoPdf(), 'demo-nova-pdf.pdf')}
+              onDemo={async () => void (await loadInto(await makeDemoPdf(), 'demo-nova-pdf.pdf'))}
+              onScan={() => setScanning(true)}
+              onLibrary={(id) => (id ? openFromLibrary(id) : setPanel('library'))}
+              onStudy={async () => {
+                const d = (await allDecks()).find((x) => dueCards(x).length);
+                if (!d) return;
+                await openFromLibrary(d.fingerprint);
+                setPanel('study');
+              }}
             />
           )}
         </section>
 
-        {panel && (panel === 'settings' || (doc && ctx)) && (
+        {panel && (panel === 'settings' || panel === 'library' || panel === 'share' || (doc && ctx)) && (
           <aside className="right">
             {panel === 'settings' && (
               <SettingsPanel
@@ -681,6 +922,23 @@ export default function App() {
                 setSettings={setSettings}
                 notify={notify}
               />
+            )}
+            {panel === 'library' && <LibraryPanel onOpen={openFromLibrary} onImport={openDialog} activeId={doc?.fingerprint} />}
+            {panel === 'share' && (
+              <SharePanel
+                ctx={ctx}
+                fingerprint={doc?.fingerprint}
+                annotations={doc?.annotations ?? []}
+                pickSignature={pickSignature}
+                onSignatureFieldTool={(signer) => {
+                  setOpts({ ...opts, fieldType: 'signature', signer });
+                  setTool('field');
+                  notify(`Dessinez sur la page le cadre où ${signer} signera.`);
+                }}
+              />
+            )}
+            {doc && panel === 'study' && (
+              <StudyPanel fingerprint={doc.fingerprint} docName={doc.name} texts={doc.texts} currentPage={page} annotations={doc.annotations} ai={ai} goTo={goTo} />
             )}
             {doc && panel === 'notes' && (
               <NotesPanel fingerprint={doc.fingerprint} docName={doc.name} currentPage={page} annotations={doc.annotations} goTo={goTo} />
@@ -697,24 +955,44 @@ export default function App() {
                   await appendNote(doc.fingerprint, doc.name, `### ✦ Assistant IA — p. ${page + 1}\n${text}`);
                   notify('Ajouté à vos notes.');
                 }}
+                corpus={corpus}
+                openAt={(id, p) => openFromLibrary(id, p)}
               />
             )}
             {ctx && panel === 'tools' && <ToolsPanel ctx={ctx} />}
             {ctx && panel === 'organize' && <OrganizePanel ctx={ctx} />}
             {ctx && panel === 'form' && <FormPanel ctx={ctx} />}
-            {doc && panel === 'reading' && <ReadingPanel texts={doc.texts} currentPage={page} goTo={goTo} />}
+            {doc && panel === 'reading' && (
+              <ReadingPanel
+                texts={doc.texts}
+                currentPage={page}
+                goTo={goTo}
+                ai={ai}
+                docName={doc.name}
+                onToNotes={(t) => appendNote(doc.fingerprint, doc.name, `### 🎧 Podcast\n${t}`).then(() => notify('Script ajouté à vos notes.'))}
+                onTranslate={() => setTranslating(true)}
+                onPresent={() => setPresenting(true)}
+                dyslexia={settings.dyslexia}
+                ruler={settings.readingRuler}
+                setDyslexia={(v) => setSettings({ ...settings, dyslexia: v })}
+                setRuler={(v) => setSettings({ ...settings, readingRuler: v })}
+              />
+            )}
           </aside>
         )}
 
         <nav className="rail" aria-label="Panneaux">
           {(
             [
+              ['library', '📚', 'Biblio', false],
               ['ai', '✦', 'IA', true],
               ['notes', '✎', 'Notes', true],
+              ['study', '🎓', 'Étude', true],
               ['reading', '📖', 'Lecture', true],
               ['form', '☑', 'Formulaire', true],
               ['organize', '▦', 'Pages', true],
               ['tools', '⚒', 'Outils', true],
+              ['share', '⇄', 'Partager', false],
               ['settings', 'ⓘ', 'Infos', false],
             ] as [Panel, string, string, boolean][]
           ).map(([id, icon, label, needsDoc]) => (
@@ -735,12 +1013,44 @@ export default function App() {
 
       {sigModal && (
         <SignatureModal
-          onClose={() => setSigModal(false)}
+          onClose={() => {
+            setSigModal(false);
+            sigResolver.current?.(null);
+            sigResolver.current = null;
+          }}
           onPick={(s) => {
             setSignature(s);
             setSigModal(false);
+            if (sigResolver.current) {
+              sigResolver.current(s);
+              sigResolver.current = null;
+              return;
+            }
             setTool('signature');
             notify('Cliquez sur la page pour placer la signature.');
+          }}
+        />
+      )}
+      {presenting && doc && (
+        <Presentation
+          pdf={doc.pdf}
+          start={page}
+          onExit={(p) => {
+            setPresenting(false);
+            setTimeout(() => goTo(p), 100);
+          }}
+        />
+      )}
+      {translating && doc?.texts && (
+        <TranslateView pdf={doc.pdf} texts={doc.texts} ai={ai} fingerprint={doc.fingerprint} name={doc.name} startPage={page} onClose={() => setTranslating(false)} />
+      )}
+      {scanning && (
+        <ScanModal
+          onClose={() => setScanning(false)}
+          onDone={async (bytes) => {
+            setScanning(false);
+            await loadInto(bytes, `scan-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.pdf`);
+            notify('Scan créé. Lancez l’OCR (Outils) pour le rendre cherchable.');
           }}
         />
       )}
@@ -750,7 +1060,21 @@ export default function App() {
   );
 }
 
-function Welcome({ onOpen, onDemo }: { onOpen: () => void; onDemo: () => void }) {
+function Welcome({
+  onOpen, onDemo, onScan, onLibrary, onStudy,
+}: {
+  onOpen: () => void;
+  onDemo: () => void;
+  onScan: () => void;
+  onLibrary: (id?: string) => void;
+  onStudy: () => void;
+}) {
+  const [recent, setRecent] = useState<LibItem[]>([]);
+  const [due, setDue] = useState(0);
+  useEffect(() => {
+    listLibrary().then((l) => setRecent(l.slice(0, 6)));
+    allDecks().then((ds) => setDue(ds.reduce((n, d) => n + dueCards(d).length, 0)));
+  }, []);
   return (
     <div className="welcome">
       <div className="hero">
@@ -761,12 +1085,41 @@ function Welcome({ onOpen, onDemo }: { onOpen: () => void; onDemo: () => void })
           <button className="primary big" onClick={onOpen}>
             Ouvrir un PDF
           </button>
+          <button className="big" onClick={onScan}>
+            📷 Scanner
+          </button>
           <button className="big" onClick={onDemo}>
             Essayer avec un exemple
           </button>
         </div>
         <p className="muted">ou glissez-déposez vos fichiers n'importe où dans la fenêtre</p>
       </div>
+      {(recent.length > 0 || due > 0) && (
+        <div className="recent">
+          {due > 0 && (
+            <button className="due-banner" onClick={onStudy}>
+              🎓 {due} fiche(s) à réviser aujourd'hui
+            </button>
+          )}
+          {recent.length > 0 && (
+            <>
+              <div className="row">
+                <b>Récemment ouverts</b>
+                <button className="link" onClick={() => onLibrary()}>Toute la bibliothèque →</button>
+              </div>
+              <div className="recent-grid">
+                {recent.map((r) => (
+                  <button key={r.id} onClick={() => onLibrary(r.id)} title={r.name}>
+                    <span>📄</span>
+                    <b>{r.name}</b>
+                    <small>{r.pages} p. · {new Date(r.openedAt).toLocaleDateString('fr-FR')}</small>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
       <div className="features">
         {[
           ['Lire', 'Miniatures, sommaire, recherche, mode nuit, deux pages, aperçu des liens au survol, mode lecture et lecture à voix haute.'],

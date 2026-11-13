@@ -58,10 +58,7 @@ export function MoreTools({ ctx, outline, run }: { ctx: DocCtx; outline: Outline
             const files = await pick('image/png,image/jpeg');
             if (files.length) ctx.openNew(await imagesToPdf(files), 'images.pdf');
           })}>À partir d'images…</button>
-          <button onClick={run('Scan', async () => {
-            const files = await pick('image/*', false, true);
-            if (files.length) ctx.openNew(await imagesToPdf(files), 'scan.pdf');
-          })}>📷 Scanner avec la caméra (mobile)</button>
+          <button onClick={ctx.startScan}>📷 Scanner (détection des bords, redressement)</button>
         </div>
         <div className="row">
           <label>Pages <input type="number" min={1} max={500} value={blank.count} onChange={(e) => setBlank({ ...blank, count: +e.target.value })} /></label>

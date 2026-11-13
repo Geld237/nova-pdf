@@ -41,9 +41,15 @@ export default defineConfig({
         ],
         // Permet « Ouvrir avec Nova PDF » une fois l'app installée (Chrome/Edge)
         file_handlers: [{ action: './', accept: { 'application/pdf': ['.pdf'] } }],
+        // Raccourcis (appui long sur l'icône sur Android, clic droit sur Windows/macOS)
+        shortcuts: [
+          { name: 'Scanner un document', short_name: 'Scanner', url: './?action=scan', icons: [{ src: 'icon-192.png', sizes: '192x192' }] },
+          { name: 'Bibliothèque', short_name: 'Bibliothèque', url: './?action=library', icons: [{ src: 'icon-192.png', sizes: '192x192' }] },
+          { name: 'Réviser mes fiches', short_name: 'Réviser', url: './?action=study', icons: [{ src: 'icon-192.png', sizes: '192x192' }] },
+        ],
       } as Record<string, unknown>,
       workbox: {
-        globPatterns: ['**/*.{js,css,html,svg,png,mjs,wasm}'],
+        globPatterns: ['**/*.{js,css,html,svg,png,mjs,wasm,woff2}'],
         maximumFileSizeToCacheInBytes: 12 * 1024 * 1024,
       },
     }),

@@ -24,10 +24,13 @@ interface Props {
   onAdd: (a: Annotation) => void;
   onDelete: (id: string) => void;
   onPageChange: (page: number) => void;
+  refs?: Map<number, string> | null;
+  ruler?: boolean;
 }
 
 export const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(p, ref) {
   const scroller = useRef<HTMLDivElement>(null);
+  const [rulerY, setRulerY] = useState<number | null>(null);
   const [visible, setVisible] = useState<Set<number>>(new Set([0, 1]));
   const ratios = useRef(new Map<number, number>());
   const onPageChange = p.onPageChange;
@@ -75,7 +78,15 @@ export const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(p, ref) {
   }
 
   return (
-    <div ref={scroller} className={`viewer ${p.night ? 'night' : ''} layout-${p.layout}`}>
+    <div
+      ref={scroller}
+      className={`viewer ${p.night ? 'night' : ''} layout-${p.layout}`}
+      onMouseMove={p.ruler ? (e) => setRulerY(e.clientY - scroller.current!.getBoundingClientRect().top) : undefined}
+      onMouseLeave={() => setRulerY(null)}
+    >
+      {p.ruler && rulerY !== null && (
+        <div className="reading-ruler" style={{ top: (scroller.current?.scrollTop ?? 0), ['--ry' as string]: `${rulerY}px` }} />
+      )}
       <div className="pages">
         {p.sizes.map((s, i) => (
           <PageView
@@ -94,6 +105,7 @@ export const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(p, ref) {
             onAdd={p.onAdd}
             onDelete={p.onDelete}
             onNavigate={scrollToPage}
+            refs={p.refs}
           />
         ))}
       </div>

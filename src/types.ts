@@ -58,7 +58,7 @@ export interface Annotation {
   text?: string; // texte saisi ou texte surligné
   fontSize?: number;
   dataUrl?: string; // image (signature, tampon)
-  fieldType?: 'text' | 'checkbox'; // champ de formulaire à créer
+  fieldType?: 'text' | 'checkbox' | 'signature'; // champ de formulaire à créer
   fieldName?: string;
   createdAt: number;
 }

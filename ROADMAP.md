@@ -11,22 +11,18 @@ Panneau de notes, panneau Infos & paramètres avec mises à jour, chiffrement AE
 ## v0.3 — disponible ✅
 Logo chat, applications Windows (.exe/.msi), macOS (.dmg universel), Linux (AppImage/deb/rpm) avec association des fichiers .pdf, Android (.apk) et iOS (.ipa) avec « Ouvrir avec », publication automatique des installeurs, vérification des nouvelles versions dans l'app.
 
+## v0.4 — disponible ✅
+Bibliothèque (dossiers, étiquettes, recherche plein texte), IA multi-documents (comparaison de contrats, revue de littérature), fiches à répétition espacée et quiz, anonymisation automatique, profil de remplissage, traduction côte à côte, podcast, mode présentation avec laser, police dyslexie et règle de lecture, références BibTeX/RIS et aperçu au survol, scanner avec redressement, commandes vocales et dictée, raccourcis d'application, connexion pair-à-pair par QR (synchronisation, relecture en direct, demande de signature).
+
 ## Prochaines idées 💡
-- [ ] **Chat avec plusieurs PDF à la fois** (bibliothèque, comparaison de contrats, revue de littérature)
-- [ ] **Bibliothèque** : dossiers, étiquettes, recherche plein texte dans tous ses PDF, documents récents
-- [ ] **Mode étude** : quiz générés par l'IA, répétition espacée des fiches, objectifs de lecture, temps de lecture estimé
-- [ ] **Citations bibliographiques** : extraction DOI/références, export BibTeX/Zotero, aperçu des références au survol
-- [ ] **Traduction côte à côte** de tout le document en conservant la mise en page
-- [ ] **Lecture audio « podcast »** : résumé lu par la synthèse vocale, file d'écoute
-- [ ] **Dictée vocale** des notes et commandes vocales (« va à la page 12 », « surligne ce paragraphe »)
-- [ ] **Remplissage intelligent** des formulaires à partir d'un profil local (nom, adresse…)
+- [ ] **Widgets natifs** d'écran d'accueil (Android AppWidget, iOS WidgetKit) : derniers documents, fiches du jour
+- [ ] **Reconnaissance vocale 100 % locale** (Whisper en WebGPU)
+- [ ] Relecture à plus de deux appareils, curseurs des autres relecteurs
+- [ ] Recherche sémantique (embeddings locaux) dans la bibliothèque
 - [ ] **Détection des champs** d'un formulaire scanné, et des signatures manquantes
-- [ ] **Anonymisation automatique** : détection des noms, e-mails, IBAN, numéros de téléphone à caviarder
-- [ ] **Mode présentation** (diaporama, pointeur laser, annotations en direct, deuxième écran)
-- [ ] **Lecture accessible** : police pour la dyslexie, règle de lecture, surlignage synchronisé avec la voix
-- [ ] **Synchronisation entre appareils** sans compte (pair-à-pair chiffré, code QR)
+- [ ] Mode présentation : vue présentateur sur un deuxième écran
+- [ ] Surlignage synchronisé avec la lecture à voix haute
 - [ ] **Thèmes et couleurs** personnalisables, mode sépia
-- [ ] **Widgets et raccourcis** (Android/iOS : derniers documents, scanner)
 - [ ] **Extensions** : API de plugins pour ajouter des outils
 
 ## v0.4 — compléter les fondamentaux

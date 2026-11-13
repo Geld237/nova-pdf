@@ -7,7 +7,8 @@ export interface ToolOptions {
   strokeWidth: number;
   opacity: number;
   fontSize: number;
-  fieldType: 'text' | 'checkbox';
+  fieldType: 'text' | 'checkbox' | 'signature';
+  signer: string; // signataire attendu (demande de signature)
   measureRatio: number; // échelle 1:N (1 = taille réelle)
   measureUnit: 'mm' | 'cm' | 'm' | 'in';
   stamp: string | null; // image du tampon
@@ -41,6 +42,7 @@ interface Props {
   onAdd: (a: Annotation) => void;
   onDelete: (id: string) => void;
   onNavigate: (page: number) => void;
+  refs?: Map<number, string> | null;
 }
 
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -57,6 +59,26 @@ function PageViewImpl(p: Props) {
   const [editorText, setEditorText] = useState('');
   const [preview, setPreview] = useState<{ x: number; y: number; page: number; url?: string } | null>(null);
   const [rendered, setRendered] = useState(false);
+  const [refTip, setRefTip] = useState<{ x: number; y: number; items: [number, string][] } | null>(null);
+
+  /** Aperçu des références : survol d'un appel [12] ou [3, 5–7]. */
+  const onTextHover = (e: React.MouseEvent) => {
+    if (!p.refs?.size) return;
+    const el = e.target as HTMLElement;
+    if (el.tagName !== 'SPAN') return setRefTip(null);
+    const m = (el.textContent ?? '').match(/\[(\d{1,3}(?:\s*[,–-]\s*\d{1,3})*)\]/);
+    if (!m) return setRefTip(null);
+    const nums: number[] = [];
+    for (const part of m[1].split(',')) {
+      const [a, b] = part.split(/[–-]/).map((x) => +x.trim());
+      for (let k = a; k <= (b || a) && nums.length < 6; k++) nums.push(k);
+    }
+    const items = nums.filter((k) => p.refs!.has(k)).map((k) => [k, p.refs!.get(k)!] as [number, string]);
+    if (!items.length) return setRefTip(null);
+    const r = wrapRef.current!.getBoundingClientRect();
+    const b = el.getBoundingClientRect();
+    setRefTip({ x: b.left - r.left, y: b.bottom - r.top + 4, items });
+  };
 
   // Rendu canvas + couche texte + liens (uniquement si la page est visible)
   useEffect(() => {
@@ -234,7 +256,10 @@ function PageViewImpl(p: Props) {
       ((d.kind === 'arrow' || d.kind === 'measure') && dist(d.points![0], d.points![1]) > 5);
     if (d.kind === 'field') {
       if (d.fieldType === 'checkbox' && d.rect) d.rect = { ...d.rect, w: Math.max(d.rect.w, 12), h: Math.max(d.rect.w, 12) };
-      d.fieldName = `${d.fieldType === 'checkbox' ? 'Case' : 'Champ'}_${p.pageIndex + 1}_${Math.random().toString(36).slice(2, 6)}`;
+      d.fieldName =
+        d.fieldType === 'signature'
+          ? `nova_sig:${p.opts.signer || 'Signataire'}:${Math.random().toString(36).slice(2, 6)}`
+          : `${d.fieldType === 'checkbox' ? 'Case' : 'Champ'}_${p.pageIndex + 1}_${Math.random().toString(36).slice(2, 6)}`;
     }
     if (big || (d.kind === 'field' && d.fieldType === 'checkbox')) p.onAdd(d);
     setDraft(null);
@@ -286,7 +311,7 @@ function PageViewImpl(p: Props) {
     >
       {!rendered && <div className="page-loading">{p.pageIndex + 1}</div>}
       <canvas ref={canvasRef} className="page-canvas" />
-      <div ref={textRef} className="textLayer" />
+      <div ref={textRef} className="textLayer" onMouseOver={onTextHover} onMouseLeave={() => setRefTip(null)} />
       <div className="link-layer">
         {links.map((l, i) => (
           <a
@@ -341,6 +366,15 @@ function PageViewImpl(p: Props) {
         />
       )}
       {preview && <LinkPreview doc={p.doc} {...preview} />}
+      {refTip && (
+        <div className="ref-tip" style={{ left: Math.min(refTip.x, p.size.w * p.scale - 340), top: refTip.y }}>
+          {refTip.items.map(([k, t]) => (
+            <p key={k}>
+              <b>[{k}]</b> {t}
+            </p>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -462,7 +496,7 @@ function AnnShape({ a, eraser, onDelete }: { a: Annotation; eraser: boolean; onD
         <g {...common}>
           <rect x={a.rect!.x} y={a.rect!.y} width={a.rect!.w} height={a.rect!.h} fill="rgb(61 82 213 / 0.12)" stroke="#3d52d5" strokeDasharray="3 2" />
           <text x={a.rect!.x + 2} y={a.rect!.y - 2} fontSize={7} fill="#3d52d5" fontFamily="Helvetica, Arial">
-            {a.fieldType === 'checkbox' ? '☐ ' : ''}{a.fieldName}
+            {a.fieldType === 'checkbox' ? '☐ ' : ''}{a.fieldType === 'signature' ? `✍ Signature : ${a.fieldName?.split(':')[1]}` : a.fieldName}
           </text>
         </g>
       );

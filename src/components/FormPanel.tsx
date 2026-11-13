@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { readFields, writeFields, type FieldInfo } from '../pdf/forms';
 import type { DocCtx } from './ToolsPanel';
+import { loadProfile, matchField } from '../profile';
 
 export function FormPanel({ ctx }: { ctx: DocCtx }) {
   const [fields, setFields] = useState<FieldInfo[] | null>(null);
@@ -35,6 +36,25 @@ export function FormPanel({ ctx }: { ctx: DocCtx }) {
       ) : (
         <>
           <p className="muted">{fields.length} champ(s) détecté(s).</p>
+          <button
+            onClick={() => {
+              const prof = loadProfile();
+              const next = { ...values };
+              let n = 0;
+              for (const f of fields) {
+                if (f.type !== 'text' || String(values[f.name] ?? '').trim()) continue;
+                const v = matchField(f.name, prof);
+                if (v) {
+                  next[f.name] = v;
+                  n++;
+                }
+              }
+              setValues(next);
+              ctx.notify(n ? `${n} champ(s) rempli(s) avec votre profil. Vérifiez puis appliquez.` : 'Aucun champ reconnu, ou profil vide (Infos → Profil).');
+            }}
+          >
+            ✨ Remplir avec mon profil
+          </button>
           <div className="fields">
             {fields.map((f) => (
               <label key={f.name} className={f.type === 'checkbox' ? 'check' : ''}>

@@ -8,9 +8,9 @@ Nova PDF fait dans le navigateur ce que font les lecteurs PDF du marché (lire, 
 
 ![Nova PDF — annotations](docs/screenshot-annotations.png)
 
-| Notes | Mises à jour |
-|---|---|
-| ![Notes](docs/screenshot-notes.png) | ![Mises à jour](docs/screenshot-updates.png) |
+| Notes | Scanner | Signature à distance |
+|---|---|---|
+| ![Notes](docs/screenshot-notes.png) | ![Scanner](docs/screenshot-scan.png) | ![Signature](docs/screenshot-signature.png) |
 
 > Web app installable (PWA) · React + TypeScript · pdf.js · pdf-lib · Tesseract · WebLLM / Ollama · Licence MIT
 
@@ -70,6 +70,40 @@ Nova PDF fait dans le navigateur ce que font les lecteurs PDF du marché (lire, 
 - Export PNG / JPG / texte / Markdown, création d'un PDF à partir d'images
 - **Comparaison de deux versions** (différences ligne à ligne)
 - Optimisation de la taille, impression
+
+### Bibliothèque
+- Tous les PDF ouverts sont rangés automatiquement (désactivable) : **dossiers**, **étiquettes**, **favoris**, documents récents sur l'accueil
+- **Recherche plein texte dans tous vos PDF**, avec extraits et ouverture à la bonne page
+
+### IA sur plusieurs documents
+- Questions sur **les onglets ouverts ou toute la bibliothèque**, réponses citées `[D2, p. 4]` (clic = ouvre le bon document à la bonne page)
+- **Comparer des contrats** (parties, durée, prix, résiliation, responsabilité…) et **revue de littérature** (objectif, méthode, résultats, limites) en tableau
+
+### Étude
+- **Fiches de révision à répétition espacée** (algorithme SM-2) : créées par l'IA à partir de vos surlignages, d'une page ou du document, ou à la main
+- **Quiz** : QCM générés par l'IA, ou QCM hors ligne construits à partir de vos fiches ; rappel des fiches à réviser sur l'accueil
+
+### Confidentialité
+- **Anonymisation automatique** : e-mails, téléphones, IBAN (clé vérifiée), cartes bancaires (Luhn), n° de sécurité sociale, SIREN/SIRET, adresses, dates, noms (règles + IA locale facultative) → caviardage réel
+- **Profil de remplissage** (Infos → Profil) : « ✨ Remplir avec mon profil » complète les formulaires (nom, adresse, e-mail…)
+
+### Lecture augmentée
+- **Traduction côte à côte** de tout le document (page originale | traduction), export Word / PDF
+- **Podcast** : l'IA écrit un dialogue à deux voix (Léa et Max) lu par la synthèse vocale
+- **Mode présentation** : plein écran, **pointeur laser**, dessin éphémère, écran noir/blanc, chronomètre
+- **Police OpenDyslexic** et **règle de lecture** (masque au-dessus et au-dessous de la ligne)
+- **Recherche universitaire** : extraction de la bibliographie et des DOI, export **BibTeX** et **RIS** (Zotero, Mendeley, EndNote), notices Crossref (facultatif, en ligne), **aperçu d'une référence au survol** d'un appel `[12]`
+
+### Mobile et voix
+- **Scanner** : détection automatique des bords, coins ajustables, **redressement de perspective**, filtres couleur / gris / noir et blanc, plusieurs pages → PDF
+- **Commandes vocales** (🎙) : « page suivante », « page 12 », « cherche photosynthèse », « zoom avant », « note : relire le chapitre »… et **dictée** dans les notes
+- **Raccourcis d'application** (appui long sur l'icône) : Scanner, Bibliothèque, Réviser
+
+### Partage sans serveur ni compte
+- **Connexion directe entre deux appareils** par QR code (WebRTC chiffré, pair-à-pair)
+- **Synchronisation** de la bibliothèque, des annotations, notes et fiches
+- **Relecture à plusieurs en direct** : les annotations apparaissent chez l'autre en temps réel, avec messagerie
+- **Demande de signature** : placez les cadres de signature, envoyez (appareil connecté, partage, e-mail), le destinataire signe dans Nova PDF et renvoie
 
 ### Infos, paramètres et mises à jour (bouton ⓘ en bas à droite)
 - **Document** : taille, version PDF, auteur, dates, format de la page, protection, pièces jointes
@@ -235,6 +269,7 @@ Les annotations sont stockées dans un modèle indépendant (coordonnées du vie
 ## Confidentialité
 
 - Aucun serveur : tout le traitement se fait dans votre navigateur.
+- Exceptions explicites : la **reconnaissance vocale** utilise celle du navigateur (Chrome peut l'envoyer à Google) ; la connexion entre appareils peut utiliser un serveur STUN public pour trouver le chemin (aucune donnée de document n'y passe) ; les notices **Crossref** n'envoient que les DOI.
 - L'IA tourne localement (WebGPU ou Ollama sur `localhost`).
 - Seuls téléchargements réseau : les poids du modèle IA et les données de langue OCR, une seule fois, depuis leurs CDN publics.
 

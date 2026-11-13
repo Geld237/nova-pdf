@@ -5,7 +5,10 @@ import {
   parseRanges, readMeta, splitPdf, stripMeta, writeMeta, type Meta,
 } from '../pdf/tools';
 import { makeSearchable, ocrPages } from '../pdf/ocr';
-import type { OutlineItem, PageText } from '../types';
+import type { Annotation, OutlineItem, PageText } from '../types';
+import type { AiSettings } from '../ai/llm';
+import { PiiTool } from './PiiTool';
+import { RefsTool } from './RefsTool';
 import { MoreTools } from './MoreTools';
 
 export interface DocCtx {
@@ -22,6 +25,12 @@ export interface DocCtx {
   notify: (msg: string) => void;
   outline: OutlineItem[];
   ocrLang: string;
+  ai: AiSettings;
+  addAnnotations: (a: Annotation[]) => void;
+  /** Octets du document sans les annotations en cours. */
+  getBytesRaw: () => Promise<Uint8Array>;
+  markReview: () => void;
+  startScan: () => void;
 }
 
 const pickFiles = (accept: string, multiple = true) =>
@@ -321,6 +330,10 @@ export function ToolsPanel({ ctx }: { ctx: DocCtx }) {
           </>
         )}
       </details>
+
+      <h3 className="group">Confidentialité et recherche</h3>
+      <PiiTool ctx={ctx} ai={ctx.ai} />
+      <RefsTool ctx={ctx} />
 
       <MoreTools ctx={ctx} outline={ctx.outline} run={wrap} />
     </div>

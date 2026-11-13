@@ -176,6 +176,9 @@ export interface AppSettings {
   confirmClose: boolean;
   ocrLang: string;
   autoCheckUpdates: boolean;
+  autoLibrary: boolean;
+  dyslexia: boolean;
+  readingRuler: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -187,4 +190,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   confirmClose: true,
   ocrLang: 'fra+eng',
   autoCheckUpdates: true,
+  autoLibrary: true,
+  dyslexia: false,
+  readingRuler: false,
 };

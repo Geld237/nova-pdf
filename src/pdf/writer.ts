@@ -222,6 +222,13 @@ export async function applyAnnotations(
           let name = a.fieldName || `Champ_${a.id}`;
           while (form.getFieldMaybe(name)) name += '_';
           if (a.fieldType === 'checkbox') form.createCheckBox(name).addToPage(page, { x: b.x, y: b.y, width: b.w, height: b.h });
+          else if (a.fieldType === 'signature') {
+            form.createTextField(name).addToPage(page, {
+              x: b.x, y: b.y, width: b.w, height: b.h,
+              backgroundColor: rgb(1, 0.98, 0.85), borderColor: rgb(0.24, 0.32, 0.84), borderWidth: 1,
+            });
+            page.drawText(sanitize(font, `Signature : ${name.split(':')[1] ?? ''}`), { x: b.x, y: b.y + b.h + 2, size: 7, font, color: rgb(0.24, 0.32, 0.84) });
+          }
           else form.createTextField(name).addToPage(page, { x: b.x, y: b.y, width: b.w, height: b.h });
           break;
         }
