@@ -50,6 +50,11 @@ export default defineConfig({
       } as Record<string, unknown>,
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,mjs,wasm,woff2}'],
+        // Les moteurs d'IA (plusieurs Mo) ne sont téléchargés que si on utilise l'IA
+        globIgnores: ['**/wllama-*.wasm', '**/lib-*.js'],
+        runtimeCaching: [
+          { urlPattern: /\/assets\/(wllama-.*\.wasm|lib-.*\.js)$/, handler: 'CacheFirst', options: { cacheName: 'nova-ai-engines' } },
+        ],
         maximumFileSizeToCacheInBytes: 12 * 1024 * 1024,
       },
     }),

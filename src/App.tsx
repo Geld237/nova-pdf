@@ -139,7 +139,17 @@ export default function App() {
   const [toast, setToast] = useState<string | null>(null);
   const [focus, setFocus] = useState(false);
   const [dragOver, setDragOver] = useState(false);
-  const [ai, setAi] = useState<AiSettings>(() => loadSetting('ai', DEFAULT_AI));
+  const [ai, setAi] = useState<AiSettings>(() => {
+    const saved = loadSetting<AiSettings & { cpuModel?: string }>('ai', DEFAULT_AI);
+    // réglages d'une version précédente : passage au moteur automatique
+    try {
+      const raw = JSON.parse(localStorage.getItem('nova:ai') ?? '{}');
+      if (!raw.cpuModel && raw.provider === 'webllm') return { ...saved, provider: 'auto' };
+    } catch {
+      /* rien */
+    }
+    return saved;
+  });
   const viewer = useRef<ViewerHandle>(null);
 
   const doc = docs.find((d) => d.id === activeId) ?? null;

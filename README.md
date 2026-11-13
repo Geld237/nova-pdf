@@ -135,7 +135,11 @@ Nova PDF fait dans le navigateur ce que font les lecteurs PDF du marché (lire, 
 | Fiches de révision | À partir de vos surlignages (ou de la page courante) |
 | Extraire les données | Chiffres, dates, noms et définitions en tableau |
 
-Deux moteurs, tous deux locaux :
+Quatre moteurs, tous locaux, choisis automatiquement (✦ IA → ⚙ → « Automatique ») :
+- **Ollama** s'il est installé ; sinon **carte graphique** (WebGPU) ; sinon **processeur** (llama.cpp en WebAssembly, fonctionne sur tous les ordinateurs). Si la carte graphique plante (ex. `DXGI_ERROR_DEVICE_REMOVED` sous Windows), Nova PDF bascule sur le processeur et s'en souvient.
+- On peut aussi charger son propre modèle **.gguf** depuis le disque.
+
+Détails :
 - **WebLLM** : le modèle s'exécute *dans le navigateur* via WebGPU (Chrome / Edge récents). Modèles proposés : Qwen 2.5 (1,5B, 3B, 7B), Llama 3.2 3B, Phi-4 mini. Téléchargé une fois, puis mis en cache.
 - **Ollama** : utilise les modèles installés sur votre ordinateur.
 

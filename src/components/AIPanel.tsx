@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { aiDiagnostics, chat, listOllamaModels, WEBLLM_MODELS, webGpuAvailable, type AiSettings, type ChatMessage } from '../ai/llm';
+import { aiDiagnostics, chat, customCpuModelName, gpuMarkedBroken, listOllamaModels, resetGpuFlag, setCustomCpuModel, CPU_MODELS, WEBLLM_MODELS, webGpuAvailable, type AiSettings, type ChatMessage } from '../ai/llm';
 import { Bm25Index, chunkPages, type Chunk } from '../ai/retrieval';
 import { saveSetting } from '../memory';
 import type { Annotation, PageText } from '../types';
@@ -365,25 +365,62 @@ export function AIPanel(p: Props) {
           <label>
             Moteur
             <select value={p.settings.provider} onChange={(e) => update({ provider: e.target.value as AiSettings['provider'] })}>
-              <option value="webllm">Dans le navigateur (WebLLM / WebGPU)</option>
+              <option value="auto">Automatique (recommandé)</option>
+              <option value="webllm">Carte graphique (WebGPU) — rapide</option>
+              <option value="cpu">Processeur — fonctionne partout, plus lent</option>
               <option value="ollama">Ollama sur cet ordinateur</option>
             </select>
           </label>
-          {p.settings.provider === 'webllm' ? (
+          {p.settings.provider === 'auto' && (
+            <p className="muted">Ollama s'il est installé, sinon la carte graphique, sinon le processeur. Bascule automatiquement si la carte graphique plante.</p>
+          )}
+          {gpuMarkedBroken() && (
+            <p className="warn">
+              La carte graphique a planté lors d'un essai précédent : le processeur est utilisé.{' '}
+              <button className="link" onClick={() => { resetGpuFlag(); aiDiagnostics(p.settings.ollamaUrl).then(setDiag); }}>Réessayer la carte graphique</button>
+            </p>
+          )}
+          {(p.settings.provider === 'webllm' || p.settings.provider === 'auto') && (
+            <label>
+              Modèle (carte graphique)
+              <select value={p.settings.webllmModel} onChange={(e) => update({ webllmModel: e.target.value })}>
+                {WEBLLM_MODELS.map((m) => (
+                  <option key={m.id} value={m.id}>{m.label}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          {(p.settings.provider === 'cpu' || p.settings.provider === 'auto') && (
             <>
               <label>
-                Modèle
-                <select value={p.settings.webllmModel} onChange={(e) => update({ webllmModel: e.target.value })}>
-                  {WEBLLM_MODELS.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.label}
-                    </option>
+                Modèle (processeur)
+                <select value={p.settings.cpuModel} onChange={(e) => update({ cpuModel: e.target.value })}>
+                  {CPU_MODELS.map((m) => (
+                    <option key={m.id} value={m.id}>{m.label}</option>
                   ))}
                 </select>
               </label>
-              {!webGpuAvailable() && <p className="warn">WebGPU indisponible ici : utilisez Chrome/Edge récents ou Ollama.</p>}
-              <p className="muted">Le modèle est téléchargé une seule fois puis mis en cache.</p>
+              <button
+                onClick={() => {
+                  const i = document.createElement('input');
+                  i.type = 'file';
+                  i.accept = '.gguf';
+                  i.onchange = () => {
+                    setCustomCpuModel(i.files?.[0]);
+                    setError(null);
+                    setDiag((d) => (d ? { ...d } : d));
+                  };
+                  i.click();
+                }}
+              >
+                Utiliser un fichier modèle .gguf de mon ordinateur…
+              </button>
+              {customCpuModelName() && <small className="muted">Modèle personnalisé : {customCpuModelName()}</small>}
             </>
+          )}
+          {p.settings.provider === 'webllm' && !webGpuAvailable() && <p className="warn">WebGPU indisponible ici : choisissez « Automatique » ou « Processeur ».</p>}
+          {p.settings.provider !== 'ollama' ? (
+            <p className="muted">Le modèle est téléchargé une seule fois puis conservé sur l'appareil.</p>
           ) : (
             <>
               <label>
