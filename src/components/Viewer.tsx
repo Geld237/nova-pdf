@@ -23,6 +23,7 @@ interface Props {
   night: boolean;
   onAdd: (a: Annotation) => void;
   onDelete: (id: string) => void;
+  onUpdate: (a: Annotation) => void;
   onPageChange: (page: number) => void;
   refs?: Map<number, string> | null;
   ruler?: boolean;
@@ -104,6 +105,7 @@ export const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(p, ref) {
             signature={p.signature}
             onAdd={p.onAdd}
             onDelete={p.onDelete}
+            onUpdate={p.onUpdate}
             onNavigate={scrollToPage}
             refs={p.refs}
           />

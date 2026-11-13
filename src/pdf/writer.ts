@@ -12,6 +12,7 @@ import {
 } from 'pdf-lib';
 import type { Annotation, Rect } from '../types';
 import { renderPageToCanvas, canvasToBlob, type PDFDocumentProxy } from './engine';
+import { removeTextInZones } from './contentEdit';
 
 export function hexToRgb(hex: string) {
   const h = hex.replace('#', '');
@@ -87,6 +88,24 @@ export async function applyAnnotations(
         h: Math.abs(y2 - y1),
       };
     };
+
+    // Modification du texte : on retire d'abord réellement le texte d'origine.
+    const edits = anns.filter((a) => a.kind === 'textedit' && a.rect);
+    if (edits.length && !redactions.length) {
+      try {
+        removeTextInZones(
+          pdf,
+          page,
+          edits.map((a) => {
+            const b = box(a.rect!);
+            const m = Math.min(4, (a.fontSize ?? 10) * 0.3);
+            return { x0: b.x - m, y0: b.y - m, x1: b.x + b.w + m, y1: b.y + b.h + m };
+          }),
+        );
+      } catch {
+        /* flux illisible : le fond masque l'ancien texte */
+      }
+    }
 
     for (const a of anns) {
       const color = hexToRgb(a.color);
@@ -193,6 +212,19 @@ export async function applyAnnotations(
           const annots = page.node.lookup(PDFName.of('Annots'));
           if (annots && 'push' in annots) (annots as unknown as { push: (r: unknown) => void }).push(ref);
           else page.node.set(PDFName.of('Annots'), pdf.context.obj([ref]));
+          break;
+        }
+        case 'textedit': {
+          const b = box(a.rect!);
+          page.drawRectangle({ x: b.x, y: b.y, width: b.w, height: b.h, color: hexToRgb(a.bg ?? '#ffffff') });
+          const fam = a.fontFamily ?? 'sans';
+          const key = fam === 'serif' ? (a.bold ? StandardFonts.TimesRomanBold : StandardFonts.TimesRoman) : fam === 'mono' ? (a.bold ? StandardFonts.CourierBold : StandardFonts.Courier) : a.bold ? StandardFonts.HelveticaBold : StandardFonts.Helvetica;
+          const f = await pdf.embedFont(key);
+          const size = a.fontSize ?? 12;
+          sanitize(f, a.text ?? '').split('\n').forEach((line, i) => {
+            const [x, y] = conv(a.rect!.x + 1.5, a.rect!.y + size * (0.95 + i * 1.2));
+            page.drawText(line, { x, y, size, font: f, color });
+          });
           break;
         }
         case 'whiteout': {

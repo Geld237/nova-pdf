@@ -12,6 +12,7 @@ export interface ToolOptions {
   measureRatio: number; // échelle 1:N (1 = taille réelle)
   measureUnit: 'mm' | 'cm' | 'm' | 'in';
   stamp: string | null; // image du tampon
+  image: string | null; // image à insérer
 }
 
 /** Longueur réelle d'un segment (points PDF) selon l'échelle choisie. */
@@ -41,12 +42,15 @@ interface Props {
   signature: string | null;
   onAdd: (a: Annotation) => void;
   onDelete: (id: string) => void;
+  onUpdate: (a: Annotation) => void;
   onNavigate: (page: number) => void;
   refs?: Map<number, string> | null;
 }
 
 const uid = () => Math.random().toString(36).slice(2, 10);
-const DRAW_TOOLS: ToolId[] = ['ink', 'rect', 'ellipse', 'arrow', 'text', 'note', 'signature', 'stamp', 'redact', 'whiteout', 'measure', 'field', 'eraser'];
+const DRAW_TOOLS: ToolId[] = ['ink', 'rect', 'ellipse', 'arrow', 'text', 'note', 'signature', 'stamp', 'image', 'redact', 'whiteout', 'measure', 'field', 'move', 'eraser'];
+
+interface TextItem { str: string; x: number; y: number; w: number; h: number; font: string }
 const SELECTION_TOOLS: ToolId[] = ['highlight', 'underline', 'strike'];
 
 function PageViewImpl(p: Props) {
@@ -59,6 +63,10 @@ function PageViewImpl(p: Props) {
   const [editorText, setEditorText] = useState('');
   const [preview, setPreview] = useState<{ x: number; y: number; page: number; url?: string } | null>(null);
   const [rendered, setRendered] = useState(false);
+  const items = useRef<TextItem[]>([]);
+  const [textEdit, setTextEdit] = useState<{ rect: Rect; text: string; size: number; family: 'sans' | 'serif' | 'mono'; bold: boolean; color: string; bg: string; original: string; replaceId?: string } | null>(null);
+  const [drag, setDrag] = useState<{ id: string; mode: 'move' | 'resize'; sx: number; sy: number; orig: Annotation; cur: Annotation } | null>(null);
+  const [hoverBlock, setHoverBlock] = useState<Rect | null>(null);
   const [refTip, setRefTip] = useState<{ x: number; y: number; items: [number, string][] } | null>(null);
 
   /** Aperçu des références : survol d'un appel [12] ou [3, 5–7]. */
@@ -118,6 +126,29 @@ function PageViewImpl(p: Props) {
       markHits(container, p.searchQuery);
 
       const vp1 = page.getViewport({ scale: 1 });
+      try {
+        const tc = await page.getTextContent();
+        const styles = tc.styles as Record<string, { fontFamily: string }>;
+        items.current = [];
+        for (const it of tc.items) {
+          if (!('str' in it) || !it.str.trim()) continue;
+          const t = it.transform as number[];
+          const h = Math.hypot(t[2], t[3]) || it.height;
+          const [x0, y0] = vp1.convertToViewportPoint(t[4], t[5] + h * 0.85);
+          const [x1, y1] = vp1.convertToViewportPoint(t[4] + it.width, t[5] - h * 0.25);
+          // nom réel de la police (ex. « Helvetica-Bold ») pour retrouver graisse et famille
+          let real = '';
+          try {
+            const fo = page.commonObjs.has(it.fontName) ? (page.commonObjs.get(it.fontName) as { name?: string; bold?: boolean; black?: boolean; italic?: boolean }) : null;
+            if (fo) real = `${fo.name ?? ''} ${fo.bold || fo.black ? 'bold' : ''}`;
+          } catch {
+            /* police non chargée */
+          }
+          items.current.push({ str: it.str, x: Math.min(x0, x1), y: Math.min(y0, y1), w: Math.abs(x1 - x0), h: Math.abs(y1 - y0), font: `${it.fontName} ${styles[it.fontName]?.fontFamily ?? ''} ${real}` });
+        }
+      } catch {
+        items.current = [];
+      }
       const annots = await page.getAnnotations();
       const ls: LinkBox[] = [];
       for (const a of annots) {
@@ -220,18 +251,30 @@ function PageViewImpl(p: Props) {
   const onPointerDown = (e: React.PointerEvent) => {
     if (!DRAW_TOOLS.includes(p.tool) || p.tool === 'eraser') return;
     const [x, y] = toPage(e);
+    if (p.tool === 'move') {
+      const hit = [...p.annotations].reverse().find((a) => {
+        const b = bboxOf(a);
+        return b && x >= b.x - 4 && x <= b.x + b.w + 8 && y >= b.y - 4 && y <= b.y + b.h + 8;
+      });
+      if (!hit) return;
+      const b = bboxOf(hit)!;
+      const resize = !!hit.rect && Math.abs(x - (b.x + b.w)) < 10 && Math.abs(y - (b.y + b.h)) < 10;
+      (e.target as Element).setPointerCapture?.(e.pointerId);
+      setDrag({ id: hit.id, mode: resize ? 'resize' : 'move', sx: x, sy: y, orig: hit, cur: hit });
+      return;
+    }
     if (p.tool === 'text' || p.tool === 'note') {
       setEditor({ x, y, kind: p.tool });
       setEditorText('');
       e.preventDefault();
       return;
     }
-    if (p.tool === 'signature' || p.tool === 'stamp') {
-      const src = p.tool === 'signature' ? p.signature : p.opts.stamp;
+    if (p.tool === 'signature' || p.tool === 'stamp' || p.tool === 'image') {
+      const src = p.tool === 'signature' ? p.signature : p.tool === 'image' ? p.opts.image : p.opts.stamp;
       if (!src) return;
       const img = new Image();
       img.onload = () => {
-        const w = p.tool === 'signature' ? 160 : 170;
+        const w = p.tool === 'signature' ? 160 : p.tool === 'image' ? Math.min(240, img.width) : 170;
         const h = (img.height / img.width) * w;
         p.onAdd({ ...base(), kind: 'image', opacity: p.tool === 'stamp' ? 0.9 : 1, rect: { x: x - w / 2, y: y - h / 2, w, h }, dataUrl: src });
       };
@@ -251,6 +294,11 @@ function PageViewImpl(p: Props) {
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
+    if (drag) {
+      const [x, y] = toPage(e);
+      setDrag({ ...drag, cur: drag.mode === 'move' ? moveAnn(drag.orig, x - drag.sx, y - drag.sy) : resizeAnn(drag.orig, x - drag.sx, y - drag.sy) });
+      return;
+    }
     if (!draft) return;
     const [x, y] = toPage(e);
     if (draft.kind === 'ink') setDraft({ ...draft, points: [...draft.points!, [x, y]] });
@@ -272,6 +320,11 @@ function PageViewImpl(p: Props) {
   };
 
   const onPointerUp = () => {
+    if (drag) {
+      if (drag.cur !== drag.orig) p.onUpdate(drag.cur);
+      setDrag(null);
+      return;
+    }
     if (!draft) return;
     const d = { ...draft } as Annotation & { _sx?: number; _sy?: number };
     delete d._sx;
@@ -289,6 +342,102 @@ function PageViewImpl(p: Props) {
     }
     if (big || (d.kind === 'field' && d.fieldType === 'checkbox')) p.onAdd(d);
     setDraft(null);
+  };
+
+  /** Outil « Modifier le texte » : retrouve la ligne cliquée et ouvre l'éditeur à sa place. */
+  const blockAt = (x: number, y: number) => {
+    const its = items.current;
+    const hit = its.find((it) => x >= it.x - 1 && x <= it.x + it.w + 1 && y >= it.y - 1 && y <= it.y + it.h + 1);
+    if (!hit) return null;
+    const line = its.filter((it) => Math.abs(it.y + it.h / 2 - (hit.y + hit.h / 2)) < hit.h * 0.35 && Math.abs(it.h - hit.h) < hit.h * 0.4);
+    line.sort((a, b) => a.x - b.x);
+    // garde le groupe contigu autour de l'élément cliqué
+    const idx = line.indexOf(hit);
+    let a = idx;
+    let b = idx;
+    while (a > 0 && line[a].x - (line[a - 1].x + line[a - 1].w) < hit.h * 1.2) a--;
+    while (b < line.length - 1 && line[b + 1].x - (line[b].x + line[b].w) < hit.h * 1.2) b++;
+    const grp = line.slice(a, b + 1);
+    let text = '';
+    grp.forEach((it, i) => {
+      if (i > 0) {
+        const gap = it.x - (grp[i - 1].x + grp[i - 1].w);
+        if (gap > hit.h * 0.15 && !text.endsWith(' ') && !it.str.startsWith(' ')) text += ' ';
+      }
+      text += it.str;
+    });
+    const x0 = Math.min(...grp.map((i) => i.x));
+    const y0 = Math.min(...grp.map((i) => i.y));
+    const x1 = Math.max(...grp.map((i) => i.x + i.w));
+    const y1 = Math.max(...grp.map((i) => i.y + i.h));
+    return { rect: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, text: text.trim(), font: hit.font, size: hit.h / 1.1 };
+  };
+
+  /** Couleurs du texte et du fond, lues sur le rendu de la page. */
+  const sampleColors = (r: Rect) => {
+    const c = canvasRef.current;
+    const k = c ? c.width / (p.size.w) : 1;
+    try {
+      const g = c!.getContext('2d', { willReadFrequently: true })!;
+      const d = g.getImageData(Math.max(0, r.x * k), Math.max(0, r.y * k), Math.max(1, r.w * k), Math.max(1, r.h * k)).data;
+      let darkest = [255, 255, 255];
+      const counts = new Map<string, number>();
+      for (let i = 0; i < d.length; i += 16) {
+        const px = [d[i], d[i + 1], d[i + 2]];
+        const lum = px[0] * 0.3 + px[1] * 0.59 + px[2] * 0.11;
+        if (lum < darkest[0] * 0.3 + darkest[1] * 0.59 + darkest[2] * 0.11) darkest = px;
+        const key = px.map((v) => Math.round(v / 16) * 16).join(',');
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+      const bg = [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0].split(',').map(Number);
+      const hex = (px: number[]) => '#' + px.map((v) => Math.min(255, v).toString(16).padStart(2, '0')).join('');
+      return { color: hex(darkest), bg: hex(bg) };
+    } catch {
+      return { color: '#000000', bg: '#ffffff' };
+    }
+  };
+
+  const onEditClick = (e: React.MouseEvent) => {
+    if (p.tool !== 'edittext' || textEdit) return;
+    const [x, y] = toPage(e);
+    // retoucher un remplacement déjà fait
+    const prev = p.annotations.find((a) => a.kind === 'textedit' && a.rect && x >= a.rect.x && x <= a.rect.x + a.rect.w && y >= a.rect.y && y <= a.rect.y + a.rect.h);
+    if (prev) {
+      setTextEdit({ rect: prev.rect!, text: prev.text ?? '', size: prev.fontSize ?? 12, family: prev.fontFamily ?? 'sans', bold: !!prev.bold, color: prev.color, bg: prev.bg ?? '#ffffff', original: prev.original ?? '', replaceId: prev.id });
+      return;
+    }
+    const blk = blockAt(x, y);
+    if (!blk) return;
+    const pad = 1.5;
+    const rect = { x: blk.rect.x - pad, y: blk.rect.y - pad, w: blk.rect.w + pad * 2, h: blk.rect.h + pad * 2 };
+    const f = blk.font.toLowerCase();
+    const family = /mono|courier/.test(f) ? 'mono' : /serif|times|roman|georgia|garamond|minion|cambria/.test(f) && !/sans/.test(f) ? 'serif' : 'sans';
+    const { color, bg } = sampleColors(rect);
+    setTextEdit({ rect, text: blk.text, original: blk.text, size: Math.round(blk.size * 10) / 10, family, bold: /bold|black|heavy|semibold/.test(f), color, bg });
+  };
+
+  const commitTextEdit = () => {
+    if (!textEdit) return;
+    if (textEdit.text !== textEdit.original || textEdit.replaceId) {
+      const lines = textEdit.text.split('\n').length;
+      const ann: Annotation = {
+        ...base(),
+        id: textEdit.replaceId ?? base().id,
+        kind: 'textedit',
+        rect: { ...textEdit.rect, h: Math.max(textEdit.rect.h, textEdit.size * 1.25 * lines) },
+        text: textEdit.text,
+        original: textEdit.original,
+        fontSize: textEdit.size,
+        fontFamily: textEdit.family,
+        bold: textEdit.bold,
+        color: textEdit.color,
+        bg: textEdit.bg,
+        opacity: 1,
+      };
+      if (textEdit.replaceId) p.onUpdate(ann);
+      else p.onAdd(ann);
+    }
+    setTextEdit(null);
   };
 
   const commitEditor = () => {
@@ -325,7 +474,8 @@ function PageViewImpl(p: Props) {
   };
 
   const overlayActive = DRAW_TOOLS.includes(p.tool);
-  const all = draft ? [...p.annotations, draft] : p.annotations;
+  const shown = drag ? p.annotations.map((a) => (a.id === drag.id ? drag.cur : a)) : p.annotations;
+  const all = draft ? [...shown, draft] : shown;
 
   return (
     <div
@@ -334,6 +484,17 @@ function PageViewImpl(p: Props) {
       data-page={p.pageIndex}
       style={{ width: p.size.w * p.scale, height: p.size.h * p.scale }}
       onMouseUp={onMouseUp}
+      onClick={onEditClick}
+      onMouseMove={
+        p.tool === 'edittext'
+          ? (e) => {
+              const [x, y] = toPage(e);
+              const b = blockAt(x, y);
+              setHoverBlock(b ? b.rect : null);
+            }
+          : undefined
+      }
+      onMouseLeave={() => setHoverBlock(null)}
     >
       {!rendered && <div className="page-loading">{p.pageIndex + 1}</div>}
       <canvas ref={canvasRef} className="page-canvas" />
@@ -370,7 +531,63 @@ function PageViewImpl(p: Props) {
         {all.map((a) => (
           <AnnShape key={a.id} a={a} eraser={p.tool === 'eraser'} onDelete={p.onDelete} />
         ))}
+        {p.tool === 'move' &&
+          all.map((a) => {
+            const b = bboxOf(a);
+            if (!b) return null;
+            return (
+              <g key={`sel-${a.id}`} className="move-box">
+                <rect x={b.x - 2} y={b.y - 2} width={b.w + 4} height={b.h + 4} />
+                {a.rect && <rect className="handle" x={b.x + b.w - 3} y={b.y + b.h - 3} width={7} height={7} />}
+              </g>
+            );
+          })}
       </svg>
+      {p.tool === 'edittext' && hoverBlock && !textEdit && (
+        <div
+          className="edit-hover"
+          style={{ left: (hoverBlock.x - 2) * p.scale, top: (hoverBlock.y - 2) * p.scale, width: (hoverBlock.w + 4) * p.scale, height: (hoverBlock.h + 4) * p.scale }}
+        />
+      )}
+      {textEdit && (
+        <div className="text-edit-box" style={{ left: textEdit.rect.x * p.scale, top: (textEdit.rect.y - 34 / p.scale) * p.scale }} onClick={(e) => e.stopPropagation()}>
+          <div className="text-edit-bar">
+            <select value={textEdit.family} onChange={(e) => setTextEdit({ ...textEdit, family: e.target.value as 'sans' | 'serif' | 'mono' })}>
+              <option value="sans">Sans empattement</option>
+              <option value="serif">Avec empattement</option>
+              <option value="mono">Chasse fixe</option>
+            </select>
+            <input type="number" min={4} max={96} step={0.5} value={textEdit.size} onChange={(e) => setTextEdit({ ...textEdit, size: +e.target.value })} title="Taille" />
+            <button className={textEdit.bold ? 'active' : ''} onClick={() => setTextEdit({ ...textEdit, bold: !textEdit.bold })} title="Gras"><b>G</b></button>
+            <input type="color" value={textEdit.color} onChange={(e) => setTextEdit({ ...textEdit, color: e.target.value })} title="Couleur du texte" />
+            <input type="color" value={textEdit.bg} onChange={(e) => setTextEdit({ ...textEdit, bg: e.target.value })} title="Couleur du fond" />
+            <button className="primary" onClick={commitTextEdit}>OK</button>
+            <button onClick={() => setTextEdit(null)}>Annuler</button>
+          </div>
+          <textarea
+            autoFocus
+            className="text-edit-area"
+            value={textEdit.text}
+            onChange={(e) => setTextEdit({ ...textEdit, text: e.target.value })}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setTextEdit(null);
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                commitTextEdit();
+              }
+            }}
+            style={{
+              width: Math.max(textEdit.rect.w * p.scale + 30, 140),
+              minHeight: textEdit.rect.h * p.scale + 6,
+              fontSize: textEdit.size * p.scale,
+              fontFamily: FONT_CSS[textEdit.family],
+              fontWeight: textEdit.bold ? 700 : 400,
+              color: textEdit.color,
+              background: textEdit.bg,
+            }}
+          />
+        </div>
+      )}
       {editor && (
         <textarea
           autoFocus
@@ -499,6 +716,18 @@ function AnnShape({ a, eraser, onDelete }: { a: Annotation; eraser: boolean; onD
       );
     case 'image':
       return <image {...common} href={a.dataUrl} x={a.rect!.x} y={a.rect!.y} width={a.rect!.w} height={a.rect!.h} />;
+    case 'textedit':
+      return (
+        <g {...common}>
+          <rect x={a.rect!.x} y={a.rect!.y} width={a.rect!.w} height={a.rect!.h} fill={a.bg ?? '#fff'} />
+          <text x={a.rect!.x + 1.5} y={a.rect!.y} fill={a.color} fontSize={a.fontSize} fontFamily={FONT_CSS[a.fontFamily ?? 'sans']} fontWeight={a.bold ? 700 : 400}>
+            {a.text?.split('\n').map((l, i) => (
+              <tspan key={i} x={a.rect!.x + 1.5} dy={a.fontSize! * (i === 0 ? 0.95 : 1.2)}>{l}</tspan>
+            ))}
+          </text>
+          <title>Texte modifié — d'origine : « {a.original} »</title>
+        </g>
+      );
     case 'whiteout':
       return <rect {...common} x={a.rect!.x} y={a.rect!.y} width={a.rect!.w} height={a.rect!.h} fill="#fff" stroke="#0002" strokeDasharray="2 2" />;
     case 'measure': {
@@ -558,6 +787,44 @@ function LinkPreview({ doc, page, x, y }: { doc: PDFDocumentProxy; page: number;
       <canvas ref={ref} />
     </div>
   );
+}
+
+const FONT_CSS = { sans: 'Helvetica, Arial, sans-serif', serif: '"Times New Roman", Times, serif', mono: '"Courier New", Courier, monospace' };
+
+function bboxOf(a: Annotation): Rect | null {
+  if (a.rect) return a.rect;
+  const rs = a.rects?.length ? a.rects : null;
+  if (rs) {
+    const x0 = Math.min(...rs.map((r) => r.x));
+    const y0 = Math.min(...rs.map((r) => r.y));
+    return { x: x0, y: y0, w: Math.max(...rs.map((r) => r.x + r.w)) - x0, h: Math.max(...rs.map((r) => r.y + r.h)) - y0 };
+  }
+  if (a.points?.length) {
+    const xs = a.points.map((q) => q[0]);
+    const ys = a.points.map((q) => q[1]);
+    return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+  }
+  return null;
+}
+
+function moveAnn(a: Annotation, dx: number, dy: number): Annotation {
+  return {
+    ...a,
+    rect: a.rect && { ...a.rect, x: a.rect.x + dx, y: a.rect.y + dy },
+    rects: a.rects?.map((r) => ({ ...r, x: r.x + dx, y: r.y + dy })),
+    points: a.points?.map((q) => [q[0] + dx, q[1] + dy] as [number, number]),
+  };
+}
+
+function resizeAnn(a: Annotation, dx: number, dy: number): Annotation {
+  if (!a.rect) return a;
+  const keepRatio = a.kind === 'image';
+  let w = Math.max(8, a.rect.w + dx);
+  let h = Math.max(8, a.rect.h + dy);
+  if (keepRatio) h = (w * a.rect.h) / a.rect.w;
+  if (keepRatio && h < 8) [h, w] = [8, (8 * a.rect.w) / a.rect.h];
+  const k = a.kind === 'text' || a.kind === 'textedit' ? h / a.rect.h : 1;
+  return { ...a, rect: { ...a.rect, w, h }, fontSize: a.fontSize ? Math.max(4, a.fontSize * k) : a.fontSize };
 }
 
 function markHits(container: HTMLElement, query: string) {

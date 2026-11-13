@@ -16,6 +16,9 @@ export type ToolId =
   | 'measure'
   | 'field'
   | 'stamp'
+  | 'edittext'
+  | 'image'
+  | 'move'
   | 'eraser';
 
 export type AnnKind =
@@ -32,7 +35,8 @@ export type AnnKind =
   | 'redact'
   | 'whiteout'
   | 'measure'
-  | 'field';
+  | 'field'
+  | 'textedit';
 
 export interface Rect {
   x: number;
@@ -60,6 +64,10 @@ export interface Annotation {
   dataUrl?: string; // image (signature, tampon)
   fieldType?: 'text' | 'checkbox' | 'signature'; // champ de formulaire à créer
   fieldName?: string;
+  bg?: string; // couleur de fond (texte modifié)
+  fontFamily?: 'sans' | 'serif' | 'mono';
+  bold?: boolean;
+  original?: string; // texte d'origine remplacé
   createdAt: number;
 }
 

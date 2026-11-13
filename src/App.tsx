@@ -35,6 +35,7 @@ import { SignatureModal } from './components/SignatureModal';
 import type { ToolOptions } from './components/PageView';
 import { Icon, type IconName } from './icons';
 import { ContextMenu, type MenuItem, type MenuState } from './components/ContextMenu';
+import { Workspace, type WorkspaceKind } from './components/Workspace';
 import { download, extractPages, reorderPages, baseName } from './pdf/tools';
 import { renderPageToCanvas, canvasToBlob } from './pdf/engine';
 import { loadDeck, newCard, saveDeck } from './study';
@@ -65,6 +66,8 @@ type SideTab = 'pages' | 'outline' | 'search' | 'annotations' | 'notebook';
 
 const TOOLS: { id: ToolId; label: string; key?: string }[] = [
   { id: 'select', label: 'Sélection de texte', key: 'v' },
+  { id: 'edittext', label: 'Modifier le texte du PDF (cliquez sur une ligne)', key: 'k' },
+  { id: 'move', label: 'Déplacer / redimensionner une annotation', key: 'g' },
   { id: 'highlight', label: 'Surligner', key: 'h' },
   { id: 'underline', label: 'Souligner', key: 'u' },
   { id: 'strike', label: 'Barrer', key: 's' },
@@ -76,6 +79,7 @@ const TOOLS: { id: ToolId; label: string; key?: string }[] = [
   { id: 'note', label: 'Note', key: 'n' },
   { id: 'signature', label: 'Signature' },
   { id: 'stamp', label: 'Tampon' },
+  { id: 'image', label: 'Insérer une image' },
   { id: 'whiteout', label: 'Correcteur blanc (masquer pour réécrire)', key: 'w' },
   { id: 'measure', label: 'Mesurer', key: 'm' },
   { id: 'field', label: 'Créer un champ de formulaire' },
@@ -113,6 +117,7 @@ export default function App() {
     measureRatio: 1,
     measureUnit: 'cm',
     stamp: null,
+    image: null,
     signer: '',
   }));
   const [presenting, setPresenting] = useState(false);
@@ -123,6 +128,7 @@ export default function App() {
   const stopVoice = useRef<(() => void) | null>(null);
   const sigResolver = useRef<((s: string | null) => void) | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [workspace, setWorkspace] = useState<WorkspaceKind | null>(null);
   const [signature, setSignature] = useState<string | null>(null);
   const [sigModal, setSigModal] = useState(false);
   const [sidebar, setSidebar] = useState(true);
@@ -376,6 +382,17 @@ export default function App() {
     },
     [setAnns],
   );
+  const onUpdate = useCallback(
+    (a: Annotation) => {
+      setAnns((l) => l.map((x) => (x.id === a.id ? a : x)));
+      const d = docRef.current;
+      if (d?.review) {
+        session.peer?.send({ type: 'ann-del', fp: d.fingerprint, id: a.id });
+        session.peer?.send({ type: 'ann-add', fp: d.fingerprint, ann: a });
+      }
+    },
+    [setAnns],
+  );
   const addAnnotations = useCallback((list: Annotation[]) => setAnns((l) => [...l, ...list]), [setAnns]);
 
   // Messages de l'appareil connecté : relecture partagée, documents à signer
@@ -530,6 +547,8 @@ export default function App() {
         markReview: () => patchDoc(doc.id, { review: true }),
         startScan: () => setScanning(true),
         openPanel: (p) => setPanel(p),
+        openWorkspace: (k) => setWorkspace(k),
+        selectTool: (t) => pickTool(t),
       }
     : null;
 
@@ -654,7 +673,7 @@ export default function App() {
     { label: 'Dupliquer la page', icon: 'copy', action: () => duplicatePage(i) },
     { label: 'Insérer une page blanche après', icon: 'create', action: () => insertBlank(i) },
     { label: 'Extraire en PDF', icon: 'extract', action: () => extractPage(i) },
-    { label: 'Exporter en image', icon: 'image', action: () => exportPage(i) },
+    { label: 'Exporter en image', icon: 'picture', action: () => exportPage(i) },
     { label: 'Copier le texte de la page', icon: 'file', disabled: !doc?.texts, action: () => navigator.clipboard?.writeText(doc?.texts?.[i]?.text ?? '') },
     { label: 'Lire la page à voix haute', icon: 'speak', disabled: !doc?.texts, action: () => speak(doc?.texts?.[i]?.text ?? '') },
     'sep',
@@ -872,12 +891,31 @@ export default function App() {
       setSigModal(true);
       return;
     }
+    if (t === 'image') {
+      const i = document.createElement('input');
+      i.type = 'file';
+      i.accept = 'image/png,image/jpeg';
+      i.onchange = () => {
+        const f = i.files?.[0];
+        if (!f) return;
+        const r = new FileReader();
+        r.onload = () => {
+          setOpts((o) => ({ ...o, image: String(r.result) }));
+          setTool('image');
+          notify("Cliquez sur la page pour placer l'image. Outil « Déplacer » (G) pour l'ajuster.");
+        };
+        r.readAsDataURL(f);
+      };
+      i.click();
+      return;
+    }
+    if (t === 'edittext') notify('Cliquez sur une ligne du document pour la modifier. Entrée pour valider.');
     if (t === 'stamp' && !opts.stamp) setOpts({ ...opts, stamp: makeStamp(STAMP_PRESETS[0].label, STAMP_PRESETS[0].color) });
     setTool(t);
     if (t === 'highlight' && ['#e53935', '#3949ab', '#212121'].includes(opts.color)) setOpts({ ...opts, color: '#ffeb3b' });
   };
 
-  const showColor = !['select', 'eraser', 'signature', 'redact', 'whiteout', 'stamp', 'field'].includes(tool);
+  const showColor = !['select', 'eraser', 'signature', 'redact', 'whiteout', 'stamp', 'field', 'edittext', 'image', 'move'].includes(tool);
 
   return (
     <div
@@ -1044,7 +1082,7 @@ export default function App() {
       )}
 
       <main className="main">
-        {doc && sidebar && (
+        {doc && sidebar && !workspace && (
           <Sidebar
             doc={doc.pdf}
             numPages={doc.sizes.length}
@@ -1063,7 +1101,9 @@ export default function App() {
         )}
 
         <section className="center">
-          {doc ? (
+          {doc && ctx && workspace ? (
+            <Workspace kind={workspace} ctx={ctx} onClose={() => setWorkspace(null)} />
+          ) : doc ? (
             <>
               <div className="viewbar">
                 <button className="icon" onClick={() => setSidebar(!sidebar)} title="Panneau latéral"><Icon name="sidebar" /></button>
@@ -1113,6 +1153,7 @@ export default function App() {
                 night={night}
                 onAdd={onAdd}
                 onDelete={onDelete}
+                onUpdate={onUpdate}
                 onPageChange={setPage}
                 refs={refs}
                 ruler={settings.readingRuler}
@@ -1135,7 +1176,7 @@ export default function App() {
           )}
         </section>
 
-        {panel && (panel === 'settings' || panel === 'library' || panel === 'share' || (doc && ctx)) && (
+        {panel && !workspace && (panel === 'settings' || panel === 'library' || panel === 'share' || (doc && ctx)) && (
           <aside className="right">
             {panel === 'settings' && (
               <SettingsPanel
@@ -1220,9 +1261,16 @@ export default function App() {
           ).map(([id, label, needsDoc]) => (
             <button
               key={id}
-              className={panel === id ? 'active' : ''}
+              className={(id === 'organize' ? workspace === 'organize' : panel === id) ? 'active' : ''}
               disabled={needsDoc && !doc}
-              onClick={() => setPanel(panel === id ? null : id)}
+              onClick={() => {
+                if (id === 'organize') return setWorkspace(workspace === 'organize' ? null : 'organize');
+                if (workspace) {
+                  setWorkspace(null);
+                  return setPanel(id);
+                }
+                setPanel(panel === id ? null : id);
+              }}
               title={id === 'settings' ? 'Infos, paramètres et mises à jour' : label}
             >
               <span className="rail-ico"><Icon name={id as IconName} size={20} /></span>

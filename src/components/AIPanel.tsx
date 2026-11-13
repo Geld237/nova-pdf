@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { chat, listOllamaModels, WEBLLM_MODELS, webGpuAvailable, type AiSettings, type ChatMessage } from '../ai/llm';
+import { aiDiagnostics, chat, listOllamaModels, WEBLLM_MODELS, webGpuAvailable, type AiSettings, type ChatMessage } from '../ai/llm';
 import { Bm25Index, chunkPages, type Chunk } from '../ai/retrieval';
 import { saveSetting } from '../memory';
 import type { Annotation, PageText } from '../types';
@@ -46,6 +46,10 @@ export function AIPanel(p: Props) {
   const [showSettings, setShowSettings] = useState(false);
   const [lang, setLang] = useState('anglais');
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+  const [diag, setDiag] = useState<{ webgpu: boolean; f16: boolean; ollama: boolean } | null>(null);
+  useEffect(() => {
+    if (showSettings) aiDiagnostics(p.settings.ollamaUrl).then(setDiag);
+  }, [showSettings, p.settings.ollamaUrl]);
   const abort = useRef<AbortController | null>(null);
   const [scope, setScope] = useState<Scope>('doc');
   const [docs, setDocs] = useState<CorpusDoc[]>([]);
@@ -345,6 +349,19 @@ export function AIPanel(p: Props) {
 
       {showSettings && (
         <div className="ai-settings">
+          {diag && (
+            <ul className="diag">
+              <li className={diag.webgpu ? 'ok' : 'ko'}>{diag.webgpu ? '✓' : '✗'} Carte graphique accessible (WebGPU)</li>
+              {diag.webgpu && <li className="ok">{diag.f16 ? '✓ Calcul 16 bits disponible' : '✓ Mode 32 bits utilisé automatiquement'}</li>}
+              <li className={diag.ollama ? 'ok' : 'muted'}>{diag.ollama ? '✓ Ollama détecté sur cet ordinateur' : '– Ollama non détecté'}</li>
+            </ul>
+          )}
+          {diag && !diag.webgpu && !diag.ollama && (
+            <p className="warn">
+              Aucun moteur local disponible. Installez <a href="https://ollama.com/download" target="_blank" rel="noreferrer">Ollama</a> (gratuit), puis
+              lancez « ollama pull qwen2.5:3b » : Nova PDF l'utilisera automatiquement.
+            </p>
+          )}
           <label>
             Moteur
             <select value={p.settings.provider} onChange={(e) => update({ provider: e.target.value as AiSettings['provider'] })}>

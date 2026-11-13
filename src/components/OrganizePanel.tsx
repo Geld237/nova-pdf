@@ -11,7 +11,7 @@ interface Item {
 
 const init = (n: number): Item[] => Array.from({ length: n }, (_, i) => ({ key: `p${i}`, src: i, rotate: 0 }));
 
-export function OrganizePanel({ ctx }: { ctx: DocCtx }) {
+export function OrganizePanel({ ctx, big }: { ctx: DocCtx; big?: boolean }) {
   const [items, setItems] = useState<Item[]>(() => init(ctx.numPages));
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [drag, setDrag] = useState<string | null>(null);
@@ -73,10 +73,12 @@ export function OrganizePanel({ ctx }: { ctx: DocCtx }) {
   };
 
   return (
-    <div className="panel organize-panel">
-      <header className="panel-head">
-        <h2>Organiser les pages</h2>
-      </header>
+    <div className={`panel organize-panel ${big ? 'big' : ''}`}>
+      {!big && (
+        <header className="panel-head">
+          <h2>Organiser les pages</h2>
+        </header>
+      )}
       <p className="muted">Glissez pour réordonner. Ctrl/Maj + clic pour sélectionner plusieurs pages.</p>
       <div className="org-actions">
         <button disabled={!targets.length} onClick={() => rotate(-90)} title="Pivoter à gauche">⟲</button>
@@ -106,7 +108,7 @@ export function OrganizePanel({ ctx }: { ctx: DocCtx }) {
             onDrop={() => onDrop(it.key)}
             onClick={(e) => toggle(it.key, e)}
           >
-            {it.src >= 0 ? <Thumb doc={ctx.pdf} page={it.src} width={90} rotate={it.rotate} /> : <div className="blank">vierge</div>}
+            {it.src >= 0 ? <Thumb doc={ctx.pdf} page={it.src} width={big ? 150 : 90} rotate={it.rotate} /> : <div className="blank">vierge</div>}
             <span>{i + 1}</span>
           </div>
         ))}

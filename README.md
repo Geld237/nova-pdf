@@ -41,6 +41,11 @@ Nova PDF fait dans le navigateur ce que font les lecteurs PDF du marché (lire, 
 - Liste des annotations du document
 - **Carnet** : tous vos surlignages et notes, *tous documents confondus*, mémorisés localement (IndexedDB)
 
+### Modifier le PDF
+- **Modifier le texte existant** (outil Ⅰ, touche K) : cliquez sur une ligne, corrigez-la sur place ; police, taille, graisse et couleurs sont reprises automatiquement. À l'enregistrement, **l'ancien texte est réellement retiré** du fichier et remplacé
+- **Insérer une image**, **déplacer / redimensionner** toute annotation (touche G), effacer une zone
+- **Outils visuels en plein écran** : découper (ciseaux entre les pages), extraire (clic sur les pages), recadrer (cadre à poignées, ajustement automatique au contenu), fusionner (glisser-déposer des documents), organiser, pages par feuille (aperçu des feuilles) ; aperçu en direct du filigrane et de la numérotation
+
 ### Ergonomie
 - Icônes au trait fin façon macOS / iOS ; outils présentés en **tuiles colorées** avec recherche
 - **Clic droit partout** : sur une sélection (surligner, expliquer avec l'IA, traduire, citer dans les notes, créer une fiche…), sur une annotation (couleur, supprimer), sur la page (ajouter une note, un texte, sa signature, un tampon ici ; pivoter, dupliquer, extraire, supprimer la page…), sur les miniatures et les onglets
@@ -143,7 +148,7 @@ Comparaison avec les outils d'Adobe Acrobat et de PDF24. ✅ disponible · 🟡 
 | Outil | Nova PDF | Outil | Nova PDF |
 |---|---|---|---|
 | Exporter / convertir le PDF | ✅ Word, HTML, PNG, JPG, TXT, MD | Fusionner | ✅ |
-| Modifier un PDF | 🟡 correcteur blanc + texte, filigrane, numéros | Compresser / optimiser web | ✅ / 🟡 (linéarisation 🔜) |
+| Modifier un PDF | ✅ texte existant, images, déplacement, filigrane, numéros | Compresser / optimiser web | ✅ / 🟡 (linéarisation 🔜) |
 | Créer un PDF | ✅ images, caméra, vierge, texte · 🔜 Office | Protéger / déverrouiller | ✅ AES-256 |
 | Combiner, organiser, trier, pivoter, supprimer, extraire | ✅ | Découper | ✅ |
 | Assistant IA, résumé génératif | ✅ 100 % local | PDF en images | ✅ |

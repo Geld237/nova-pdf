@@ -12,6 +12,7 @@ import type { AiSettings } from '../ai/llm';
 import { PiiTool } from './PiiTool';
 import { RefsTool } from './RefsTool';
 import { MoreTools } from './MoreTools';
+import { Thumb } from './Thumb';
 
 export interface DocCtx {
   name: string;
@@ -34,20 +35,37 @@ export interface DocCtx {
   markReview: () => void;
   startScan: () => void;
   openPanel: (p: 'organize') => void;
+  openWorkspace: (k: 'organize' | 'split' | 'extract' | 'crop' | 'merge' | 'nup') => void;
+  selectTool: (t: 'edittext' | 'image' | 'move' | 'whiteout') => void;
 }
 
 /** Catalogue des outils : icône, couleur de tuile (dégradé façon iOS) et groupe. */
 const CATALOG: { group: string; items: { id: string; label: string; icon: IconName; color: [string, string]; keywords?: string }[] }[] = [
   {
+    group: 'Modifier',
+    items: [
+      { id: '!edittext', label: 'Modifier le texte', icon: 'edittext', color: ['#409cff', '#3d52d5'], keywords: 'éditer corriger changer texte' },
+      { id: '!image', label: 'Insérer une image', icon: 'image', color: ['#5fe07a', '#20a14a'], keywords: 'photo logo' },
+      { id: '!move', label: 'Déplacer / redimensionner', icon: 'move', color: ['#ffb340', '#f08c00'], keywords: 'bouger taille' },
+      { id: '!whiteout', label: 'Effacer une zone', icon: 'whiteout', color: ['#c7c7cc', '#8e8e93'], keywords: 'blanc correcteur' },
+      { id: 'watermark', label: 'Filigrane', icon: 'watermark', color: ['#70d7ff', '#30b0c7'] },
+      { id: 'pagenum', label: 'Numéroter', icon: 'pagenum', color: ['#98989d', '#6e6e73'], keywords: 'numéros de page' },
+      { id: 'bookmarks', label: 'Signets', icon: 'bookmarks', color: ['#ff7b72', '#ff453a'], keywords: 'sommaire' },
+      { id: 'attach', label: 'Pièces jointes', icon: 'attach', color: ['#aeaeb2', '#8e8e93'], keywords: 'joindre fichier' },
+      { id: 'viewer', label: "Préférences d'affichage", icon: 'viewer', color: ['#409cff', '#0a84ff'] },
+      { id: 'flatten', label: 'Aplatir', icon: 'flatten', color: ['#c69c6d', '#a2845e'], keywords: 'figer' },
+    ],
+  },
+  {
     group: 'Organiser',
     items: [
-      { id: 'merge', label: 'Fusionner', icon: 'merge', color: ['#5ac8fa', '#007aff'], keywords: 'combiner joindre' },
-      { id: 'split', label: 'Découper', icon: 'split', color: ['#ffb340', '#ff9500'], keywords: 'diviser séparer' },
-      { id: 'extract', label: 'Extraire des pages', icon: 'extract', color: ['#4cd9c0', '#00c7be'] },
-      { id: '@organize', label: 'Organiser les pages', icon: 'organize', color: ['#7d7aff', '#5856d6'], keywords: 'trier pivoter supprimer réordonner' },
-      { id: 'nup', label: 'Pages par feuille', icon: 'grid', color: ['#a28bff', '#7a5af8'], keywords: 'imposition' },
+      { id: '#merge', label: 'Fusionner', icon: 'merge', color: ['#5ac8fa', '#007aff'], keywords: 'combiner joindre' },
+      { id: '#split', label: 'Découper', icon: 'split', color: ['#ffb340', '#ff9500'], keywords: 'diviser séparer' },
+      { id: '#extract', label: 'Extraire des pages', icon: 'extract', color: ['#4cd9c0', '#00c7be'] },
+      { id: '#organize', label: 'Organiser les pages', icon: 'organize', color: ['#7d7aff', '#5856d6'], keywords: 'trier pivoter supprimer réordonner' },
+      { id: '#nup', label: 'Pages par feuille', icon: 'grid', color: ['#a28bff', '#7a5af8'], keywords: 'imposition' },
       { id: 'resize', label: 'Format des pages', icon: 'resize', color: ['#da8fff', '#af52de'], keywords: 'a4 letter taille' },
-      { id: 'crop', label: 'Recadrer', icon: 'crop', color: ['#ff6b9a', '#ff2d55'], keywords: 'rogner marges' },
+      { id: '#crop', label: 'Recadrer', icon: 'crop', color: ['#ff6b9a', '#ff2d55'], keywords: 'rogner marges' },
     ],
   },
   {
@@ -58,17 +76,6 @@ const CATALOG: { group: string; items: { id: string; label: string; icon: IconNa
       { id: 'convert', label: 'Convertir', icon: 'convert', color: ['#ff6961', '#ff3b30'], keywords: 'word docx html images' },
       { id: 'export', label: 'Exporter', icon: 'export', color: ['#64d2ff', '#32ade6'], keywords: 'png jpg texte markdown' },
       { id: 'ocr', label: 'OCR', icon: 'ocr', color: ['#ffd60a', '#ffcc00'], keywords: 'reconnaissance texte scan cherchable' },
-    ],
-  },
-  {
-    group: 'Modifier',
-    items: [
-      { id: 'watermark', label: 'Filigrane', icon: 'watermark', color: ['#70d7ff', '#30b0c7'] },
-      { id: 'pagenum', label: 'Numéroter', icon: 'pagenum', color: ['#98989d', '#6e6e73'], keywords: 'numéros de page' },
-      { id: 'bookmarks', label: 'Signets', icon: 'bookmarks', color: ['#ff7b72', '#ff453a'], keywords: 'sommaire' },
-      { id: 'attach', label: 'Pièces jointes', icon: 'attach', color: ['#aeaeb2', '#8e8e93'], keywords: 'joindre fichier' },
-      { id: 'viewer', label: "Préférences d'affichage", icon: 'viewer', color: ['#409cff', '#0a84ff'] },
-      { id: 'flatten', label: 'Aplatir', icon: 'flatten', color: ['#c69c6d', '#a2845e'], keywords: 'figer' },
     ],
   },
   {
@@ -118,7 +125,8 @@ export function ToolsPanel({ ctx }: { ctx: DocCtx }) {
   const [active, setActive] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
   const open = (id: string) => {
-    if (id === '@organize') ctx.openPanel('organize');
+    if (id.startsWith('#')) ctx.openWorkspace(id.slice(1) as 'organize');
+    else if (id.startsWith('!')) ctx.selectTool(id.slice(1) as 'edittext');
     else if (id === '@scan') ctx.startScan();
     else setActive(id);
   };
@@ -243,6 +251,10 @@ export function ToolsPanel({ ctx }: { ctx: DocCtx }) {
       </Section>
 
       <Section id="watermark" title="Filigrane">
+        <div className="live-preview">
+          <Thumb doc={ctx.pdf} page={ctx.currentPage} width={220} />
+          <span className="wm-preview" style={{ color: wm.color, opacity: wm.opacity, fontSize: wm.size * (220 / 595) }}>{wm.text}</span>
+        </div>
         <label>
           Texte <input value={wm.text} onChange={(e) => setWm({ ...wm, text: e.target.value })} />
         </label>
@@ -263,6 +275,12 @@ export function ToolsPanel({ ctx }: { ctx: DocCtx }) {
       </Section>
 
       <Section id="pagenum" title="Numéroter les pages">
+        <div className="live-preview">
+          <Thumb doc={ctx.pdf} page={ctx.currentPage} width={220} />
+          <span className={`pn-preview ${num.position}`}>
+            {num.format.replace('{n}', String(ctx.currentPage + num.start)).replace('{total}', String(ctx.numPages + num.start - 1))}
+          </span>
+        </div>
         <label>
           Format <input value={num.format} onChange={(e) => setNum({ ...num, format: e.target.value })} />
         </label>

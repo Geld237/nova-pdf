@@ -9,7 +9,7 @@ import {
   LayoutGrid, Library, ListOrdered, ListTree, Lock, LockOpen, Maximize, MessageSquareQuote, Mic, Minimize2, Minus,
   Monitor, Moon, MoonStar, MousePointer2, MoveUpRight, Notebook, NotebookPen, Paintbrush, Palette, PanelLeft,
   Paperclip, PenLine, Plus, Presentation, Printer, Quote, Redo2, RotateCcw, RotateCw, Rows3, Ruler, Save, SaveAll,
-  Scaling, ScanLine, ScanText, Scissors, Search, Share2, ShieldCheck, Signature, Sparkles, Square, SquarePen, Stamp,
+  Scaling, ScanLine, TextCursor, ImagePlus, Move, ScanText, Scissors, Search, Share2, ShieldCheck, Signature, Sparkles, Square, SquarePen, Stamp,
   StickyNote, Strikethrough, Sun, TextCursorInput, Trash2, Type, Underline, Undo2, Volume2, Wrench, X,
   type LucideIcon,
 } from 'lucide-react';
@@ -20,7 +20,7 @@ export const Icons = {
   // outils d'annotation
   select: MousePointer2, highlight: Highlighter, underline: Underline, strike: Strikethrough, ink: PenLine,
   rect: Square, ellipse: Circle, arrow: MoveUpRight, text: Type, note: StickyNote, signature: Signature,
-  stamp: Stamp, whiteout: Paintbrush, measure: Ruler, field: TextCursorInput, redact: EyeOff, eraser: Eraser,
+  stamp: Stamp, edittext: TextCursor, image: ImagePlus, move: Move, whiteout: Paintbrush, measure: Ruler, field: TextCursorInput, redact: EyeOff, eraser: Eraser,
   // barre du haut
   open: FolderOpen, save: Save, saveAs: SaveAll, print: Printer, undo: Undo2, redo: Redo2, sun: Sun, moon: Moon, mic: Mic,
   // barre de vue
@@ -39,7 +39,7 @@ export const Icons = {
   refs: Quote, archive: Archive,
   // menus contextuels
   copy: Copy, trash: Trash2, rotateCw: RotateCw, rotateCcw: RotateCcw, speak: Volume2, cite: MessageSquareQuote,
-  card: BookmarkPlus, back: ChevronLeft, close: X, palette: Palette, file: FileText, image: Image, hash: Hash,
+  card: BookmarkPlus, back: ChevronLeft, close: X, palette: Palette, file: FileText, picture: Image, hash: Hash,
   sign: FileSignature, swap: ArrowRightLeft, edit: SquarePen,
 } satisfies Record<string, LucideIcon>;
 
