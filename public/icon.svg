@@ -1,6 +1,30 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="112" fill="#3d52d5"/>
-  <path d="M160 96h140l92 92v228a32 32 0 0 1-32 32H160a32 32 0 0 1-32-32V128a32 32 0 0 1 32-32z" fill="#fff"/>
-  <path d="M300 96v76a16 16 0 0 0 16 16h76" fill="#c8cff7"/>
-  <path d="M256 236l22 46 50 6-37 34 10 50-45-25-45 25 10-50-37-34 50-6z" fill="#3d52d5"/>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4f63e6"/>
+      <stop offset="1" stop-color="#2f3fb8"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <!-- tête de chat en forme de page, coin plié sur l'oreille droite -->
+  <path d="M128 176 L150 82 Q154 68 166 76 L226 128 L286 128 L346 76 Q358 68 362 82 L384 176
+           L384 384 Q384 424 344 424 L168 424 Q128 424 128 384 Z" fill="#fff"/>
+  <path d="M346 76 Q358 68 362 82 L376 142 L330 106 Z" fill="#c9d0fb"/>
+  <!-- yeux -->
+  <ellipse cx="204" cy="262" rx="22" ry="30" fill="#2f3fb8"/>
+  <ellipse cx="308" cy="262" rx="22" ry="30" fill="#2f3fb8"/>
+  <circle cx="212" cy="250" r="7" fill="#fff"/>
+  <circle cx="316" cy="250" r="7" fill="#fff"/>
+  <!-- nez et bouche -->
+  <path d="M244 312 L268 312 L256 326 Z" fill="#f48fb1"/>
+  <path d="M256 326 Q256 344 236 344 M256 326 Q256 344 276 344" fill="none" stroke="#2f3fb8" stroke-width="7" stroke-linecap="round"/>
+  <!-- moustaches -->
+  <g stroke="#9aa5f0" stroke-width="7" stroke-linecap="round">
+    <path d="M176 318 L118 306"/><path d="M176 336 L120 344"/>
+    <path d="M336 318 L394 306"/><path d="M336 336 L392 344"/>
+  </g>
+  <!-- lignes de texte : c'est aussi un document -->
+  <g stroke="#dfe3fd" stroke-width="10" stroke-linecap="round">
+    <path d="M190 384 L322 384"/><path d="M214 404 L298 404"/>
+  </g>
 </svg>

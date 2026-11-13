@@ -1,4 +1,5 @@
 import { registerSW } from 'virtual:pwa-register';
+import { isNative } from './platform';
 
 /** Gestion des mises à jour de l'application (service worker + vérification GitHub). */
 export const APP_VERSION = __APP_VERSION__;
@@ -19,7 +20,8 @@ export const onUpdateState = (l: Listener) => {
 };
 
 export function initUpdates() {
-  if (!('serviceWorker' in navigator) || import.meta.env.DEV) return;
+  // Les applications natives sont mises à jour par leur installeur (GitHub Releases).
+  if (isNative || !('serviceWorker' in navigator) || import.meta.env.DEV) return;
   doUpdate = registerSW({
     onNeedRefresh() {
       updateState.needRefresh = true;
@@ -55,6 +57,37 @@ export async function checkForAppUpdate(): Promise<boolean> {
 export async function applyAppUpdate() {
   if (doUpdate) await doUpdate(true);
   else location.reload();
+}
+
+export interface ReleaseInfo {
+  tag: string;
+  name: string;
+  date: string;
+  url: string;
+  assets: { name: string; url: string; size: number }[];
+}
+
+/** Dernière version publiée (installeurs Windows, macOS, Linux, Android, iOS). */
+export async function fetchLatestRelease(): Promise<ReleaseInfo | null> {
+  const r = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, { headers: { Accept: 'application/vnd.github+json' } });
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error(`GitHub a répondu ${r.status}`);
+  const j = await r.json();
+  return {
+    tag: j.tag_name,
+    name: j.name || j.tag_name,
+    date: j.published_at,
+    url: j.html_url,
+    assets: (j.assets ?? []).map((a: { name: string; browser_download_url: string; size: number }) => ({ name: a.name, url: a.browser_download_url, size: a.size })),
+  };
+}
+
+/** Compare deux versions « 1.2.3 ». */
+export function isNewer(remote: string, local: string): boolean {
+  const a = remote.replace(/^v/, '').split('.').map(Number);
+  const b = local.replace(/^v/, '').split('.').map(Number);
+  for (let i = 0; i < 3; i++) if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) > (b[i] ?? 0);
+  return false;
 }
 
 export interface RemoteVersion {

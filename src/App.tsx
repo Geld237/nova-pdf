@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { extractAllText, getOutline, openPdfWithPassword, type PDFDocumentProxy } from './pdf/engine';
 import { unlockPdf } from './pdf/security';
+import { isNative, isTauri, listenOpenedFiles, nativeOpenPdfs, saveFile, writeNativeFile } from './platform';
 import { applyAnnotations } from './pdf/writer';
 import { download } from './pdf/tools';
 import { DEFAULT_SETTINGS, appendNote, loadMemory, loadSetting, saveMemory, saveSetting, type AppSettings } from './memory';
@@ -36,6 +37,7 @@ interface DocState {
   redo: Annotation[][];
   dirty: boolean;
   handle?: FileSystemFileHandle;
+  path?: string; // chemin natif (application de bureau)
   startPage: number;
   encrypted: boolean;
 }
@@ -144,7 +146,7 @@ export default function App() {
 
   // ----- Ouverture -----------------------------------------------------------
   const loadInto = useCallback(
-    async (bytes: Uint8Array, name: string, existingId?: string, handle?: FileSystemFileHandle) => {
+    async (bytes: Uint8Array, name: string, existingId?: string, handle?: FileSystemFileHandle, path?: string) => {
       let pdf: PDFDocumentProxy;
       let encrypted = false;
       try {
@@ -185,7 +187,7 @@ export default function App() {
       const id = uid();
       const state: DocState = {
         id, name, bytes, pdf, version: 0, sizes, outline, texts: null, fingerprint,
-        annotations: settings.rememberAnnotations ? mem?.annotations ?? [] : [], undo: [], redo: [], dirty: false, handle,
+        annotations: settings.rememberAnnotations ? mem?.annotations ?? [] : [], undo: [], redo: [], dirty: false, handle, path,
         startPage: settings.resumeLastPage ? mem?.lastPage ?? 0 : 0, encrypted,
       };
       setDocs((ds) => [...ds, state]);
@@ -214,6 +216,11 @@ export default function App() {
   );
 
   const openDialog = useCallback(async () => {
+    const native = await nativeOpenPdfs().catch(() => null);
+    if (native) {
+      for (const f of native) await loadInto(f.bytes, f.name, undefined, undefined, f.path);
+      return;
+    }
     const w = window as unknown as { showOpenFilePicker?: (o: unknown) => Promise<FileSystemFileHandle[]> };
     if (w.showOpenFilePicker) {
       try {
@@ -230,7 +237,15 @@ export default function App() {
     input.multiple = true;
     input.onchange = () => input.files && openFiles(input.files);
     input.click();
-  }, [openFiles]);
+  }, [openFiles, loadInto]);
+
+  // Applications natives : fichiers ouverts depuis le système (double-clic, « Ouvrir avec »)
+  useEffect(() => {
+    listenOpenedFiles(async (files) => {
+      for (const f of files) await loadInto(f.bytes, f.name, undefined, undefined, f.path);
+    }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Ouverture depuis le système (PWA installée : « Ouvrir avec Nova PDF »)
   useEffect(() => {
@@ -311,6 +326,15 @@ export default function App() {
     if (!doc) return;
     try {
       const out = await getBytes();
+      if (isTauri) {
+        let path = asNew ? undefined : doc.path;
+        if (path) await writeNativeFile(path, out);
+        else path = (await saveFile(out, doc.name)) ?? undefined;
+        if (!path) return;
+        patchDoc(doc.id, { path, name: path.split(/[\\/]/).pop() ?? doc.name, dirty: false });
+        notify('Document enregistré ✔');
+        return;
+      }
       const w = window as unknown as { showSaveFilePicker?: (o: unknown) => Promise<FileSystemFileHandle> };
       let handle = asNew ? undefined : doc.handle;
       if (!handle && w.showSaveFilePicker) {
@@ -445,7 +469,7 @@ export default function App() {
     >
       <header className="topbar">
         <div className="brand">
-          <span className="logo">◆</span> Nova<b>PDF</b>
+          <img className="logo" src="./icon.svg" alt="" /> Nova<b>PDF</b>
         </div>
         <button onClick={openDialog} title="Ouvrir (Ctrl+O)">Ouvrir</button>
         {doc && (
@@ -730,7 +754,7 @@ function Welcome({ onOpen, onDemo }: { onOpen: () => void; onDemo: () => void })
   return (
     <div className="welcome">
       <div className="hero">
-        <div className="logo-big">◆</div>
+        <img className="logo-big" src="./icon.svg" alt="Logo Nova PDF (chat)" />
         <h1>Nova PDF</h1>
         <p>Le lecteur PDF libre, rapide et privé, avec une IA qui tourne sur votre appareil.</p>
         <div className="row center">
@@ -758,6 +782,16 @@ function Welcome({ onOpen, onDemo }: { onOpen: () => void; onDemo: () => void })
           </div>
         ))}
       </div>
+      {!isNative && (
+        <div className="get-apps">
+          <span className="muted">Aussi disponible en application :</span>
+          {['Windows', 'macOS', 'Linux', 'Android', 'iPhone'].map((p) => (
+            <a key={p} href="https://github.com/Geld237/nova-pdf/releases/latest" target="_blank" rel="noreferrer">
+              {p}
+            </a>
+          ))}
+        </div>
+      )}
       <p className="muted small">100 % local · Open source (MIT) · Installable comme application</p>
     </div>
   );

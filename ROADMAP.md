@@ -8,7 +8,28 @@ Lecture, recherche, annotations, formulaires, signature, organisation des pages,
 ## v0.2 — disponible ✅
 Panneau de notes, panneau Infos & paramètres avec mises à jour, chiffrement AES-256 et déverrouillage, tampons, mesure, correcteur blanc, création de champs de formulaire, compression forte, réparation, recadrage, pages par feuille, format de page, signets, pièces jointes, préférences d'affichage, aplatissement, export Word/HTML, extraction d'images, PDF vierge et texte → PDF, scan caméra, sauvegarde/restauration des données.
 
-## v0.3 — compléter les fondamentaux
+## v0.3 — disponible ✅
+Logo chat, applications Windows (.exe/.msi), macOS (.dmg universel), Linux (AppImage/deb/rpm) avec association des fichiers .pdf, Android (.apk) et iOS (.ipa) avec « Ouvrir avec », publication automatique des installeurs, vérification des nouvelles versions dans l'app.
+
+## Prochaines idées 💡
+- [ ] **Chat avec plusieurs PDF à la fois** (bibliothèque, comparaison de contrats, revue de littérature)
+- [ ] **Bibliothèque** : dossiers, étiquettes, recherche plein texte dans tous ses PDF, documents récents
+- [ ] **Mode étude** : quiz générés par l'IA, répétition espacée des fiches, objectifs de lecture, temps de lecture estimé
+- [ ] **Citations bibliographiques** : extraction DOI/références, export BibTeX/Zotero, aperçu des références au survol
+- [ ] **Traduction côte à côte** de tout le document en conservant la mise en page
+- [ ] **Lecture audio « podcast »** : résumé lu par la synthèse vocale, file d'écoute
+- [ ] **Dictée vocale** des notes et commandes vocales (« va à la page 12 », « surligne ce paragraphe »)
+- [ ] **Remplissage intelligent** des formulaires à partir d'un profil local (nom, adresse…)
+- [ ] **Détection des champs** d'un formulaire scanné, et des signatures manquantes
+- [ ] **Anonymisation automatique** : détection des noms, e-mails, IBAN, numéros de téléphone à caviarder
+- [ ] **Mode présentation** (diaporama, pointeur laser, annotations en direct, deuxième écran)
+- [ ] **Lecture accessible** : police pour la dyslexie, règle de lecture, surlignage synchronisé avec la voix
+- [ ] **Synchronisation entre appareils** sans compte (pair-à-pair chiffré, code QR)
+- [ ] **Thèmes et couleurs** personnalisables, mode sépia
+- [ ] **Widgets et raccourcis** (Android/iOS : derniers documents, scanner)
+- [ ] **Extensions** : API de plugins pour ajouter des outils
+
+## v0.4 — compléter les fondamentaux
 - [ ] Déplacer / redimensionner / modifier une annotation existante
 - [ ] Annotations natives éditables (Highlight, Ink, Square…) en plus de l'aplatissement
 - [ ] Import / export XFDF des commentaires
@@ -20,7 +41,7 @@ Panneau de notes, panneau Infos & paramètres avec mises à jour, chiffrement AE
 - [ ] Actions en lot (appliquer une suite d'outils à plusieurs fichiers)
 - [ ] Internationalisation (anglais, espagnol…)
 
-## v0.4 — lecture augmentée
+## v0.5 — lecture augmentée
 - [ ] **Recherche sémantique** avec embeddings locaux (transformers.js) en plus de BM25
 - [ ] **Vision locale** : expliquer un graphique, un tableau ou une formule (modèle multimodal WebGPU)
 - [ ] Reflow intelligent des PDF à colonnes, tableaux et formules (mobile)
@@ -29,7 +50,7 @@ Panneau de notes, panneau Infos & paramètres avec mises à jour, chiffrement AE
 - [ ] Répétition espacée des fiches de révision générées
 - [ ] Graphe de connaissances reliant les annotations de tous les documents
 
-## v0.5 — accessibilité et conformité
+## v0.6 — accessibilité et conformité
 - [ ] Vérification et balisage PDF/UA assisté par IA (European Accessibility Act)
 - [ ] Génération de textes alternatifs pour les images
 - [ ] Export PDF/A pour l'archivage
@@ -37,8 +58,8 @@ Panneau de notes, panneau Infos & paramètres avec mises à jour, chiffrement AE
 - [ ] Demande de signatures à des tiers sans serveur (lien P2P chiffré)
 
 ## v1.0 — partout
-- [ ] Application desktop **Tauri** (Windows, macOS, Linux), avec accès natif aux dossiers
-- [ ] Application mobile (Capacitor) avec scan par caméra
+- [ ] Publication sur Microsoft Store, Mac App Store, Google Play et App Store
+- [ ] Scan mobile avec détection des bords et correction de perspective
 - [ ] **Collaboration temps réel pair-à-pair** chiffrée de bout en bout (CRDT / WebRTC), sans serveur
 - [ ] Synchronisation optionnelle des annotations via un dossier choisi (Drive, Nextcloud…)
 - [ ] Extensions (plugins) pour ajouter des outils

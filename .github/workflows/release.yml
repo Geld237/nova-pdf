@@ -1,0 +1,165 @@
+name: Publier les applications
+
+# Crée une version GitHub avec les installeurs pour toutes les plateformes.
+# Déclenchement : pousser un tag « vX.Y.Z » (ex. git tag v0.3.0 && git push origin v0.3.0)
+# ou lancer le workflow à la main depuis l'onglet Actions.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag de la version (ex. v0.3.0)'
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Créer la version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" \
+            --title "Nova PDF $TAG" \
+            --notes "## Télécharger
+
+          | Plateforme | Fichier |
+          |---|---|
+          | Windows | \`.exe\` (installeur) ou \`.msi\` |
+          | macOS (Apple Silicon et Intel) | \`.dmg\` |
+          | Linux | \`.AppImage\`, \`.deb\` ou \`.rpm\` |
+          | Android | \`.apk\` |
+          | iPhone / iPad | \`.ipa\` non signé (à signer, voir README) ou version web à ajouter à l'écran d'accueil |
+          | Navigateur | https://geld237.github.io/nova-pdf/ |
+
+          Voir le [README](https://github.com/Geld237/nova-pdf#installer) pour les instructions d'installation."
+
+  desktop:
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            args: ''
+          - platform: macos-latest
+            args: '--target universal-apple-darwin'
+          - platform: ubuntu-22.04
+            args: ''
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Dépendances Linux
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - run: npm ci
+      - run: node scripts/sync-version.mjs
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Facultatif : signature et notarisation Apple (sinon l'app n'est pas signée)
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          tagName: ${{ env.TAG }}
+          releaseName: Nova PDF ${{ env.TAG }}
+          args: ${{ matrix.args }}
+
+  android:
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: android-actions/setup-android@v3
+      - run: npm ci
+      - run: node scripts/sync-version.mjs
+      - run: npm run build && npx cap sync android
+      - name: Clé de signature (facultative)
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+          fi
+      - name: Compiler l'APK
+        working-directory: android
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          chmod +x gradlew
+          V=${TAG#v}
+          mkdir -p ../out
+          if [ -n "$ANDROID_KEYSTORE_PATH" ]; then
+            ./gradlew assembleRelease bundleRelease
+            cp app/build/outputs/apk/release/app-release.apk "../out/Nova-PDF-$V-android.apk"
+            cp app/build/outputs/bundle/release/app-release.aab "../out/Nova-PDF-$V-android-playstore.aab"
+          else
+            # Sans clé : APK signé avec la clé de débogage, installable directement
+            ./gradlew assembleDebug
+            cp app/build/outputs/apk/debug/app-debug.apk "../out/Nova-PDF-$V-android.apk"
+          fi
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          files: out/*
+
+  ios:
+    needs: create-release
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node scripts/sync-version.mjs
+      - run: npm run build && npx cap sync ios
+      - name: Compiler l'app iOS (non signée)
+        run: |
+          V=${TAG#v}
+          xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+          mkdir -p Payload out
+          cp -R build/Build/Products/Release-iphoneos/App.app Payload/
+          zip -qry "out/Nova-PDF-$V-ios-unsigned.ipa" Payload
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          files: out/*

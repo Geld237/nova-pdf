@@ -24,7 +24,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'prompt',
-      includeAssets: ['icon.svg'],
+      includeAssets: ['icon.svg', 'apple-touch-icon.png'],
       manifest: {
         name: 'Nova PDF',
         short_name: 'Nova PDF',
@@ -35,7 +35,9 @@ export default defineConfig({
         start_url: './',
         icons: [
           { src: 'icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
+          { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
           { src: 'icon-512.png', sizes: '512x512', type: 'image/png' },
+          { src: 'icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
         ],
         // Permet « Ouvrir avec Nova PDF » une fois l'app installée (Chrome/Edge)
         file_handlers: [{ action: './', accept: { 'application/pdf': ['.pdf'] } }],

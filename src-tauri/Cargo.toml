@@ -1,0 +1,34 @@
+[package]
+name = "nova-pdf"
+version = "0.3.0"
+description = "Nova PDF — lecteur PDF libre et privé avec IA locale"
+authors = ["Georges Eloundou"]
+license = "MIT"
+repository = "https://github.com/Geld237/nova-pdf"
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "nova_pdf_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-opener = "2"
+
+[target.'cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))'.dependencies]
+tauri-plugin-single-instance = "2"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

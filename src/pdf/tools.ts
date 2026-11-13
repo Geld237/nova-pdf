@@ -1,3 +1,4 @@
+import { saveFile } from '../platform';
 import { PDFDocument, StandardFonts, degrees, rgb } from 'pdf-lib';
 import { hexToRgb, sanitize } from './writer';
 
@@ -203,15 +204,7 @@ export function diffLines(a: string, b: string): { type: 'same' | 'add' | 'del';
 }
 
 export function download(data: Uint8Array | Blob | string, name: string, type = 'application/pdf') {
-  const blob = data instanceof Blob ? data : new Blob([data as BlobPart], { type });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = name;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  void saveFile(data, name, type);
 }
 
 export function baseName(name: string) {

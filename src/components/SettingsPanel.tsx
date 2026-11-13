@@ -6,8 +6,9 @@ import {
 import { download } from '../pdf/tools';
 import {
   APP_COMMIT, APP_VERSION, BUILD_DATE, REPO, applyAppUpdate, checkForAppUpdate, fetchLatestCommit,
-  onUpdateState, updateState, type RemoteVersion,
+  fetchLatestRelease, isNewer, onUpdateState, updateState, type ReleaseInfo, type RemoteVersion,
 } from '../update';
+import { isNative, platformName } from '../platform';
 
 interface DocInfo {
   name: string;
@@ -212,6 +213,7 @@ function Updates({ notify }: { notify: (m: string) => void }) {
   const [remote, setRemote] = useState<RemoteVersion | null>(null);
   const [remoteErr, setRemoteErr] = useState<string | null>(null);
   const [install, setInstall] = useState<(Event & { prompt: () => Promise<void> }) | null>(null);
+  const [release, setRelease] = useState<ReleaseInfo | null | undefined>(undefined);
 
   useEffect(() => {
     const off = onUpdateState(() => force((n) => n + 1));
@@ -231,10 +233,11 @@ function Updates({ notify }: { notify: (m: string) => void }) {
   const check = async () => {
     setRemoteErr(null);
     const [app] = await Promise.all([
-      checkForAppUpdate(),
-      fetchLatestCommit().then(setRemote).catch((e) => setRemoteErr((e as Error).message)),
+      isNative ? Promise.resolve(false) : checkForAppUpdate(),
+      isNative ? Promise.resolve() : fetchLatestCommit().then(setRemote).catch((e) => setRemoteErr((e as Error).message)),
+      fetchLatestRelease().then(setRelease).catch((e) => setRemoteErr((e as Error).message)),
     ]);
-    if (!app) notify('Aucune nouvelle version de l’application à installer.');
+    if (!isNative && !app) notify('Aucune nouvelle version de l’application à installer.');
   };
 
   const upToDate = remote && APP_COMMIT && remote.sha === APP_COMMIT;
@@ -245,6 +248,7 @@ function Updates({ notify }: { notify: (m: string) => void }) {
       <table className="info-table">
         <tbody>
           <tr><th>Version</th><td>{APP_VERSION}</td></tr>
+          <tr><th>Plateforme</th><td>{platformName()}{isNative ? ' (application)' : ''}</td></tr>
           <tr><th>Révision</th><td><code>{APP_COMMIT ? APP_COMMIT.slice(0, 7) : 'locale'}</code></td></tr>
           <tr><th>Compilée le</th><td>{new Date(BUILD_DATE).toLocaleString('fr-FR')}</td></tr>
           <tr><th>Hors ligne</th><td>{updateState.offlineReady || navigator.serviceWorker?.controller ? 'Prêt ✓' : 'Non (ouvrez l’app en ligne une fois)'}</td></tr>
@@ -276,9 +280,22 @@ function Updates({ notify }: { notify: (m: string) => void }) {
         </div>
       )}
       {remoteErr && <p className="muted">GitHub injoignable ({remoteErr}).</p>}
+      {release === null && <p className="muted">Aucune version installable publiée pour l'instant.</p>}
+      {release && (
+        <div className="update-box">
+          <small className="muted">Dernière version installable : {release.name}</small>
+          <div>
+            {isNewer(release.tag, APP_VERSION) ? <b>↻ Nouvelle version {release.tag} disponible.</b> : '✓ Votre version est à jour.'}
+          </div>
+          <ReleaseAssets release={release} />
+          <a href={release.url} target="_blank" rel="noreferrer">Notes de version</a>
+        </div>
+      )}
 
       <h3 className="sub">Installer l'application</h3>
-      {standalone ? (
+      {isNative ? (
+        <p className="muted">✓ Application {platformName()} installée.</p>
+      ) : standalone ? (
         <p className="muted">✓ Nova PDF est installée sur cet appareil.</p>
       ) : install ? (
         <button onClick={() => install.prompt()}>Installer Nova PDF</button>
@@ -290,6 +307,27 @@ function Updates({ notify }: { notify: (m: string) => void }) {
         Depuis le code source : <code>git pull && npm install && npm run build</code>.
       </p>
     </div>
+  );
+}
+
+/** Liens de téléchargement, celui de la plateforme courante en premier. */
+function ReleaseAssets({ release }: { release: ReleaseInfo }) {
+  const p = platformName();
+  const ua = navigator.userAgent;
+  const guess = /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iOS' : /Windows/.test(ua) ? 'Windows' : /Mac/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : p;
+  const kind = (n: string) =>
+    /\.apk$|\.aab$/i.test(n) ? 'Android' : /\.ipa$/i.test(n) ? 'iOS' : /\.(exe|msi)$/i.test(n) ? 'Windows' : /\.dmg$|\.app\.tar\.gz$/i.test(n) ? 'macOS' : /\.(AppImage|deb|rpm)$/i.test(n) ? 'Linux' : '';
+  const assets = release.assets.filter((a) => kind(a.name) && !/\.sig$/.test(a.name)).sort((a, b) => Number(kind(b.name) === guess) - Number(kind(a.name) === guess));
+  if (!assets.length) return null;
+  return (
+    <ul className="att-list">
+      {assets.map((a) => (
+        <li key={a.name}>
+          <span>{kind(a.name) === guess ? '★ ' : ''}{kind(a.name)} — {a.name}</span>
+          <a href={a.url} target="_blank" rel="noreferrer">{(a.size / 1048576).toFixed(0)} Mo</a>
+        </li>
+      ))}
+    </ul>
   );
 }
 

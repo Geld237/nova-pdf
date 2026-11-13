@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Nova PDF</string>
+    <string name="title_activity_main">Nova PDF</string>
+    <string name="package_name">io.github.geld237.novapdf</string>
+    <string name="custom_url_scheme">io.github.geld237.novapdf</string>
+</resources>

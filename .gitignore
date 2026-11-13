@@ -22,3 +22,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Builds natifs
+src-tauri/target
+android/app/build
+ios/App/build
+/build
+/out
+/Payload

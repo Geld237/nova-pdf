@@ -1,4 +1,6 @@
-# ◆ Nova PDF
+<p align="center"><img src="public/icon.svg" width="112" alt="Logo Nova PDF : un chat"></p>
+
+# Nova PDF
 
 **Le lecteur PDF libre, rapide et privé, avec une IA qui tourne sur votre appareil.**
 
@@ -119,6 +121,46 @@ Comparaison avec les outils d'Adobe Acrobat et de PDF24. ✅ disponible · 🟡 
 
 ---
 
+## Installer
+
+Toutes les versions sont sur la page **[Releases](https://github.com/Geld237/nova-pdf/releases/latest)**, compilées automatiquement par GitHub Actions.
+
+| Plateforme | Fichier | Installation |
+|---|---|---|
+| **Windows** 10/11 | `Nova PDF_x.y.z_x64-setup.exe` (ou `.msi`) | Double-clic. Au premier lancement, SmartScreen peut afficher « Informations complémentaires → Exécuter quand même » (app non signée). |
+| **macOS** 11+ (Apple Silicon et Intel) | `Nova PDF_x.y.z_universal.dmg` | Glisser dans Applications. App non signée : clic droit → **Ouvrir** la première fois (ou Réglages → Confidentialité et sécurité → « Ouvrir quand même »). |
+| **Linux** | `.AppImage`, `.deb`, `.rpm` | `chmod +x *.AppImage && ./Nova*.AppImage`, ou `sudo apt install ./nova-pdf_*.deb` |
+| **Android** 7+ | `Nova-PDF-x.y.z-android.apk` | Ouvrir le fichier sur le téléphone, autoriser « installer des applis inconnues ». |
+| **iPhone / iPad** | Version web, ou `Nova-PDF-x.y.z-ios-unsigned.ipa` | Le plus simple : ouvrir l'app web dans Safari → Partager → **Sur l'écran d'accueil**. L'`.ipa` doit être signé (AltStore, Sideloadly avec un identifiant Apple gratuit, ou compte développeur pour TestFlight/App Store). |
+| **Navigateur** | — | https://geld237.github.io/nova-pdf/ (installable en un clic dans Chrome/Edge) |
+
+Toutes les versions partagent le même code : l'application de bureau utilise [Tauri](https://tauri.app) (≈ 5 Mo, WebView du système), les applications mobiles [Capacitor](https://capacitorjs.com). Sur ordinateur, les `.pdf` peuvent être associés à Nova PDF (double-clic, « Ouvrir avec ») ; sur Android et iOS, Nova PDF apparaît dans « Ouvrir avec / Partager ».
+
+### Publier une nouvelle version
+
+```bash
+npm version 0.4.0 --no-git-tag-version   # change la version
+node scripts/sync-version.mjs            # la recopie dans Android, iOS et Tauri
+git commit -am "v0.4.0" && git tag v0.4.0 && git push && git push origin v0.4.0
+```
+Le workflow **Publier les applications** crée la version GitHub et y ajoute tous les installeurs (≈ 20 min). Les applications installées le signalent dans **ⓘ Infos → Mises à jour**.
+
+**Signatures facultatives** (secrets du dépôt, *Settings → Secrets → Actions*) :
+- Android (Play Store) : `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` → APK signé + `.aab`
+- macOS : `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID` → app signée et notarisée
+- iOS App Store / TestFlight : nécessite un compte Apple Developer (99 $/an)
+
+### Compiler soi-même
+
+```bash
+npm run desktop:dev        # app de bureau en développement (Rust requis)
+npm run desktop:build      # installeur pour le système courant
+npm run android:apk        # APK de débogage (Android Studio / SDK requis)
+npm run ios:open           # ouvre le projet dans Xcode (macOS requis)
+```
+
+---
+
 ## Démarrer
 
 ```bash
@@ -166,7 +208,11 @@ Puis, dans Nova PDF : panneau **✦ IA** → ⚙ → Moteur « Ollama ».
 ## Architecture
 
 ```
+src-tauri/                  # application de bureau (Rust) : association .pdf, instance unique
+android/  ios/              # projets natifs Capacitor
+scripts/sync-version.mjs    # recopie la version dans tous les projets
 src/
+├── platform.ts             # ouverture / enregistrement / partage selon la plateforme
 ├── App.tsx                 # coquille : onglets, barres, raccourcis, enregistrement
 ├── pdf/
 │   ├── engine.ts           # pdf.js : ouverture, texte, sommaire, rendu
