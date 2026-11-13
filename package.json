@@ -1,0 +1,44 @@
+{
+  "name": "nova-pdf",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview",
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "@mlc-ai/web-llm": "^0.2.88",
+    "idb-keyval": "^6.3.0",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^6.5.438",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "tesseract.js": "^7.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "oxlint": "^1.90.0",
+    "typescript": "~7.0.2",
+    "vite": "^8.3.6",
+    "vite-plugin-pwa": "^2.0.0"
+  },
+  "description": "Lecteur PDF libre, rapide et privé, avec IA locale — tout dans le navigateur.",
+  "license": "MIT",
+  "keywords": [
+    "pdf",
+    "pdf-reader",
+    "pdf-editor",
+    "ocr",
+    "local-ai",
+    "webllm",
+    "pwa",
+    "react"
+  ]
+}
