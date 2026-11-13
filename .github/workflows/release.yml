@@ -102,13 +102,26 @@ jobs:
               { echo "$v<<__EOF__"; echo "${!v}"; echo "__EOF__"; } >> "$GITHUB_ENV"
             fi
           done
+      # Mise à jour automatique : les installeurs sont signés si la clé est fournie en secret
+      - name: Clé de mise à jour (si configurée)
+        shell: bash
+        env:
+          TAURI_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_KEY_PW: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ -n "$TAURI_KEY" ]; then
+            { echo "TAURI_SIGNING_PRIVATE_KEY<<__EOF__"; echo "$TAURI_KEY"; echo "__EOF__"; } >> "$GITHUB_ENV"
+            echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$TAURI_KEY_PW" >> "$GITHUB_ENV"
+            echo '{"bundle":{"createUpdaterArtifacts":true}}' > src-tauri/updater.conf.json
+            echo "EXTRA_ARGS=--config src-tauri/updater.conf.json" >> "$GITHUB_ENV"
+          fi
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ env.TAG }}
           releaseName: Nova PDF ${{ env.TAG }}
-          args: ${{ matrix.args }}
+          args: ${{ matrix.args }} ${{ env.EXTRA_ARGS }}
 
   android:
     needs: create-release

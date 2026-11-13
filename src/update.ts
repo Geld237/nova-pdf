@@ -111,3 +111,37 @@ export async function fetchLatestCommit(): Promise<RemoteVersion> {
     url: j.html_url,
   };
 }
+
+/* ----- Application de bureau : mise à jour automatique (Tauri) --------------- */
+
+export interface NativeUpdate {
+  version: string;
+  notes?: string;
+  install: (onProgress: (ratio: number) => void) => Promise<void>;
+}
+
+/** Vérifie s'il existe une version plus récente de l'application de bureau. */
+export async function checkNativeUpdate(): Promise<NativeUpdate | null> {
+  const { isTauri } = await import('./platform');
+  if (!isTauri) return null;
+  const { check } = await import('@tauri-apps/plugin-updater');
+  const u = await check();
+  if (!u) return null;
+  return {
+    version: u.version,
+    notes: u.body,
+    install: async (onProgress) => {
+      let total = 0;
+      let done = 0;
+      await u.downloadAndInstall((e) => {
+        if (e.event === 'Started') total = e.data.contentLength ?? 0;
+        else if (e.event === 'Progress') {
+          done += e.data.chunkLength;
+          if (total) onProgress(done / total);
+        } else if (e.event === 'Finished') onProgress(1);
+      });
+      const { relaunch } = await import('@tauri-apps/plugin-process');
+      await relaunch();
+    },
+  };
+}

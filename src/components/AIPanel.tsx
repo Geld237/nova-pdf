@@ -180,6 +180,29 @@ export function AIPanel(p: Props) {
     ]);
   };
 
+  // Commandes reçues du menu contextuel (« Expliquer », « Traduire », « Résumer »)
+  useEffect(() => {
+    const h = (e: Event) => {
+      const d = (e as CustomEvent).detail as { action: 'explain' | 'translate' | 'ask'; text: string };
+      setScope('doc');
+      if (d.action === 'explain') {
+        const ctx = p.texts?.[p.currentPage]?.text.slice(0, 3000) ?? '';
+        run(`Explique : « ${d.text.slice(0, 120)}${d.text.length > 120 ? '…' : ''} »`, [
+          { role: 'system', content: SYSTEM },
+          { role: 'user', content: `Contexte (page ${p.currentPage + 1}) :\n${ctx}\n\nExplique simplement ce passage, définis les termes techniques et donne un exemple :\n« ${d.text} »` },
+        ]);
+      } else if (d.action === 'translate') {
+        run(`Traduire : « ${d.text.slice(0, 80)}… »`, [
+          { role: 'system', content: 'Tu es un traducteur. Traduis fidèlement en français si le texte est dans une autre langue, sinon en anglais. Réponds uniquement par la traduction.' },
+          { role: 'user', content: d.text },
+        ]);
+      } else setInput(d.text);
+    };
+    window.addEventListener('nova:ai', h);
+    return () => window.removeEventListener('nova:ai', h);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.texts, p.currentPage, p.settings]);
+
   const flashcards = () => {
     const hl = p.annotations.filter((a) => a.text && (a.kind === 'highlight' || a.kind === 'note'));
     const source = hl.length

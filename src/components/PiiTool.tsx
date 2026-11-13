@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Section } from './ToolSection';
 import { chat, type AiSettings } from '../ai/llm';
 import { PII_LABELS, detectPii, type PiiHit, type PiiKind } from '../pii';
 import type { Annotation } from '../types';
@@ -65,8 +66,7 @@ export function PiiTool({ ctx, ai }: { ctx: DocCtx; ai: AiSettings }) {
   const groups = (hits ?? []).reduce<Record<string, PiiHit[]>>((g, h) => ((g[h.kind] ??= []).push(h), g), {});
 
   return (
-    <details>
-      <summary>Anonymiser (données personnelles)</summary>
+    <Section id="pii" title="Anonymiser (données personnelles)">
       <p className="muted">Repère automatiquement les données sensibles, sur l'appareil, puis les caviarde.</p>
       <div className="perm-grid">
         {(Object.keys(PII_LABELS) as PiiKind[]).map((k) => (
@@ -121,6 +121,6 @@ export function PiiTool({ ctx, ai }: { ctx: DocCtx; ai: AiSettings }) {
           {hits.length > 0 && <button className="primary" onClick={apply}>Caviarder {keep.size} élément(s)</button>}
         </>
       )}
-    </details>
+    </Section>
   );
 }

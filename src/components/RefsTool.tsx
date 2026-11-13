@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Section } from './ToolSection';
 import { crossrefBibTeX, extractDois, extractReferences, toBibTeX, toRIS, type RefEntry } from '../refs';
 import { baseName, download } from '../pdf/tools';
 import type { DocCtx } from './ToolsPanel';
@@ -30,8 +31,7 @@ export function RefsTool({ ctx }: { ctx: DocCtx }) {
   };
 
   return (
-    <details>
-      <summary>Références bibliographiques</summary>
+    <Section id="refs" title="Références bibliographiques">
       <p className="muted">Extrait la bibliographie et les DOI. Les appels [12] du texte affichent la référence au survol.</p>
       <button disabled={!ctx.texts} onClick={analyze}>Analyser la bibliographie</button>
       {refs && (
@@ -63,6 +63,6 @@ export function RefsTool({ ctx }: { ctx: DocCtx }) {
           {!refs.length && <p className="empty">Aucune section « Références / Bibliographie » détectée.</p>}
         </>
       )}
-    </details>
+    </Section>
   );
 }

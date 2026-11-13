@@ -3,10 +3,9 @@ import { extractAllText, getOutline, openPdfWithPassword, type PDFDocumentProxy 
 import { unlockPdf } from './pdf/security';
 import { isNative, isTauri, listenOpenedFiles, nativeOpenPdfs, saveFile, writeNativeFile } from './platform';
 import { applyAnnotations } from './pdf/writer';
-import { download } from './pdf/tools';
 import { DEFAULT_SETTINGS, appendNote, loadMemory, loadSetting, saveMemory, saveSetting, type AppSettings } from './memory';
 import { STAMP_PRESETS, makeStamp } from './stamps';
-import { applyAppUpdate, checkForAppUpdate, onUpdateState, updateState } from './update';
+import { applyAppUpdate, checkForAppUpdate, checkNativeUpdate, onUpdateState, updateState, type NativeUpdate } from './update';
 import { NotesPanel } from './components/NotesPanel';
 import { LibraryPanel } from './components/LibraryPanel';
 import { StudyPanel } from './components/StudyPanel';
@@ -34,6 +33,11 @@ import { FormPanel } from './components/FormPanel';
 import { ReadingPanel } from './components/ReadingPanel';
 import { SignatureModal } from './components/SignatureModal';
 import type { ToolOptions } from './components/PageView';
+import { Icon, type IconName } from './icons';
+import { ContextMenu, type MenuItem, type MenuState } from './components/ContextMenu';
+import { download, extractPages, reorderPages, baseName } from './pdf/tools';
+import { renderPageToCanvas, canvasToBlob } from './pdf/engine';
+import { loadDeck, newCard, saveDeck } from './study';
 
 interface DocState {
   id: string;
@@ -59,24 +63,24 @@ interface DocState {
 type Panel = 'ai' | 'notes' | 'study' | 'reading' | 'form' | 'organize' | 'tools' | 'library' | 'share' | 'settings' | null;
 type SideTab = 'pages' | 'outline' | 'search' | 'annotations' | 'notebook';
 
-const TOOLS: { id: ToolId; icon: string; label: string; key?: string }[] = [
-  { id: 'select', icon: '𝙸', label: 'Sélection de texte', key: 'v' },
-  { id: 'highlight', icon: '▮', label: 'Surligner', key: 'h' },
-  { id: 'underline', icon: 'U̲', label: 'Souligner', key: 'u' },
-  { id: 'strike', icon: 'S̶', label: 'Barrer', key: 's' },
-  { id: 'ink', icon: '✎', label: 'Dessin libre', key: 'd' },
-  { id: 'rect', icon: '▭', label: 'Rectangle', key: 'r' },
-  { id: 'ellipse', icon: '◯', label: 'Ellipse', key: 'e' },
-  { id: 'arrow', icon: '➚', label: 'Flèche', key: 'a' },
-  { id: 'text', icon: 'T', label: 'Texte', key: 't' },
-  { id: 'note', icon: '🗨', label: 'Note', key: 'n' },
-  { id: 'signature', icon: '✍', label: 'Signature' },
-  { id: 'stamp', icon: '⎔', label: 'Tampon' },
-  { id: 'whiteout', icon: '▯', label: 'Correcteur blanc (masquer pour réécrire)', key: 'w' },
-  { id: 'measure', icon: '📏', label: 'Mesurer', key: 'm' },
-  { id: 'field', icon: '⌸', label: 'Créer un champ de formulaire' },
-  { id: 'redact', icon: '█', label: 'Caviarder (définitif)' },
-  { id: 'eraser', icon: '⌫', label: 'Gomme (supprimer une annotation)', key: 'x' },
+const TOOLS: { id: ToolId; label: string; key?: string }[] = [
+  { id: 'select', label: 'Sélection de texte', key: 'v' },
+  { id: 'highlight', label: 'Surligner', key: 'h' },
+  { id: 'underline', label: 'Souligner', key: 'u' },
+  { id: 'strike', label: 'Barrer', key: 's' },
+  { id: 'ink', label: 'Dessin libre', key: 'd' },
+  { id: 'rect', label: 'Rectangle', key: 'r' },
+  { id: 'ellipse', label: 'Ellipse', key: 'e' },
+  { id: 'arrow', label: 'Flèche', key: 'a' },
+  { id: 'text', label: 'Texte', key: 't' },
+  { id: 'note', label: 'Note', key: 'n' },
+  { id: 'signature', label: 'Signature' },
+  { id: 'stamp', label: 'Tampon' },
+  { id: 'whiteout', label: 'Correcteur blanc (masquer pour réécrire)', key: 'w' },
+  { id: 'measure', label: 'Mesurer', key: 'm' },
+  { id: 'field', label: 'Créer un champ de formulaire' },
+  { id: 'redact', label: 'Caviarder (définitif)' },
+  { id: 'eraser', label: 'Gomme (supprimer une annotation)', key: 'x' },
 ];
 
 const COLORS = ['#ffeb3b', '#8bc34a', '#4fc3f7', '#f48fb1', '#ff9800', '#e53935', '#3949ab', '#212121'];
@@ -98,6 +102,7 @@ export default function App() {
   const [sysDark, setSysDark] = useState(() => !!matchMedia?.('(prefers-color-scheme: dark)').matches);
   const dark = settings.theme === 'dark' || (settings.theme === 'system' && sysDark);
   const [updateReady, setUpdateReady] = useState(false);
+  const [nativeUpdate, setNativeUpdate] = useState<NativeUpdate | null>(null);
   const [tool, setTool] = useState<ToolId>('select');
   const [opts, setOpts] = useState<ToolOptions>(() => ({
     color: loadSetting('settings', DEFAULT_SETTINGS).highlightColor,
@@ -117,6 +122,7 @@ export default function App() {
   const [voiceHeard, setVoiceHeard] = useState('');
   const stopVoice = useRef<(() => void) | null>(null);
   const sigResolver = useRef<((s: string | null) => void) | null>(null);
+  const [menu, setMenu] = useState<MenuState | null>(null);
   const [signature, setSignature] = useState<string | null>(null);
   const [sigModal, setSigModal] = useState(false);
   const [sidebar, setSidebar] = useState(true);
@@ -159,7 +165,11 @@ export default function App() {
   // mises à jour de l'application
   useEffect(() => {
     const off = onUpdateState(() => setUpdateReady(updateState.needRefresh));
-    if (settings.autoCheckUpdates) setTimeout(() => checkForAppUpdate().catch(() => {}), 4000);
+    if (settings.autoCheckUpdates)
+      setTimeout(() => {
+        checkForAppUpdate().catch(() => {});
+        checkNativeUpdate().then(setNativeUpdate).catch(() => {});
+      }, 4000);
     return () => {
       off();
     };
@@ -519,6 +529,7 @@ export default function App() {
         getBytesRaw: async () => doc.bytes,
         markReview: () => patchDoc(doc.id, { review: true }),
         startScan: () => setScanning(true),
+        openPanel: (p) => setPanel(p),
       }
     : null;
 
@@ -592,6 +603,200 @@ export default function App() {
         return;
       case 'ask': setPanel('ai'); return notify(`Question : ${a.q} — tapez Entrée dans le panneau IA`);
     }
+  };
+
+  // ----- Menus contextuels (clic droit) -----------------------------------------
+  const pageOp = async (label: string, fn: (bytes: Uint8Array, n: number) => Promise<Uint8Array>) => {
+    if (!ctx || !doc) return;
+    try {
+      await ctx.replace(await fn(await ctx.getBytes(), doc.sizes.length), label);
+    } catch (e) {
+      notify(`Erreur : ${(e as Error).message}`);
+    }
+  };
+  const order = (n: number) => Array.from({ length: n }, (_, i) => ({ src: i, rotate: 0 }));
+  const rotatePage = (i: number, deg: number) =>
+    pageOp(`Page ${i + 1} pivotée`, (b, n) => reorderPages(b, order(n).map((o) => (o.src === i ? { ...o, rotate: deg } : o))));
+  const deletePage = (i: number) => {
+    if (!doc || doc.sizes.length < 2) return notify('Impossible de supprimer la seule page.');
+    if (!confirm(`Supprimer la page ${i + 1} ?`)) return;
+    pageOp(`Page ${i + 1} supprimée`, (b, n) => reorderPages(b, order(n).filter((o) => o.src !== i)));
+  };
+  const insertBlank = (i: number) =>
+    pageOp('Page blanche insérée', (b, n) => {
+      const o = order(n);
+      o.splice(i + 1, 0, { src: -1, rotate: 0 });
+      return reorderPages(b, o);
+    });
+  const duplicatePage = (i: number) =>
+    pageOp(`Page ${i + 1} dupliquée`, (b, n) => {
+      const o = order(n);
+      o.splice(i + 1, 0, { src: i, rotate: 0 });
+      return reorderPages(b, o);
+    });
+  const extractPage = async (i: number) => doc && ctx && download(await extractPages(await ctx.getBytes(), [i]), `${baseName(doc.name)}-p${i + 1}.pdf`);
+  const exportPage = async (i: number) => doc && download(await canvasToBlob(await renderPageToCanvas(doc.pdf, i, 2)), `${baseName(doc.name)}-p${i + 1}.png`, 'image/png');
+  const speak = (t: string) => {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(t);
+    u.lang = 'fr-FR';
+    speechSynthesis.speak(u);
+  };
+  const askAi = (action: 'explain' | 'translate', text: string) => {
+    setPanel('ai');
+    setTimeout(() => window.dispatchEvent(new CustomEvent('nova:ai', { detail: { action, text } })), 120);
+  };
+
+  const pageMenuItems = (i: number): MenuItem[] => [
+    { header: `Page ${i + 1}` },
+    { label: 'Pivoter à droite', icon: 'rotateCw', action: () => rotatePage(i, 90) },
+    { label: 'Pivoter à gauche', icon: 'rotateCcw', action: () => rotatePage(i, -90) },
+    { label: 'Dupliquer la page', icon: 'copy', action: () => duplicatePage(i) },
+    { label: 'Insérer une page blanche après', icon: 'create', action: () => insertBlank(i) },
+    { label: 'Extraire en PDF', icon: 'extract', action: () => extractPage(i) },
+    { label: 'Exporter en image', icon: 'image', action: () => exportPage(i) },
+    { label: 'Copier le texte de la page', icon: 'file', disabled: !doc?.texts, action: () => navigator.clipboard?.writeText(doc?.texts?.[i]?.text ?? '') },
+    { label: 'Lire la page à voix haute', icon: 'speak', disabled: !doc?.texts, action: () => speak(doc?.texts?.[i]?.text ?? '') },
+    'sep',
+    { label: 'Supprimer la page', icon: 'trash', danger: true, action: () => deletePage(i) },
+  ];
+
+  const onViewerMenu = (e: React.MouseEvent) => {
+    if (!doc) return;
+    const pageEl = (e.target as HTMLElement).closest('.page') as HTMLElement | null;
+    if (!pageEl) return;
+    e.preventDefault();
+    const pi = Number(pageEl.dataset.page);
+    const r = pageEl.getBoundingClientRect();
+    const x = (e.clientX - r.left) / scale;
+    const y = (e.clientY - r.top) / scale;
+    const sel = window.getSelection()?.toString().replace(/\s+/g, ' ').trim() ?? '';
+    const items: MenuItem[] = [];
+
+    if (sel) {
+      const short = sel.length > 28 ? `${sel.slice(0, 28)}…` : sel;
+      items.push(
+        { header: `« ${short} »` },
+        { label: 'Copier', icon: 'copy', shortcut: 'Ctrl+C', action: () => navigator.clipboard?.writeText(sel) },
+        { label: 'Surligner', icon: 'highlight', shortcut: 'H', action: () => window.dispatchEvent(new CustomEvent('nova:mark-selection', { detail: { kind: 'highlight' } })) },
+        { label: 'Souligner', icon: 'underline', action: () => window.dispatchEvent(new CustomEvent('nova:mark-selection', { detail: { kind: 'underline' } })) },
+        { label: 'Barrer', icon: 'strike', action: () => window.dispatchEvent(new CustomEvent('nova:mark-selection', { detail: { kind: 'strike' } })) },
+        'sep',
+        { label: "Expliquer avec l'IA", icon: 'ai', action: () => askAi('explain', sel) },
+        { label: 'Traduire', icon: 'translate', action: () => askAi('translate', sel) },
+        { label: 'Citer dans mes notes', icon: 'cite', action: () => appendNote(doc.fingerprint, doc.name, `> « ${sel} » [p. ${pi + 1}]`).then(() => notify('Citation ajoutée à vos notes.')) },
+        {
+          label: 'Créer une fiche de révision',
+          icon: 'card',
+          action: async () => {
+            const q = prompt('Question de la fiche (la sélection sera la réponse) :', `Que dit le document sur « ${short} » ?`);
+            if (!q) return;
+            const deck = await loadDeck(doc.fingerprint, doc.name);
+            await saveDeck({ ...deck, cards: [...deck.cards, newCard(q, sel, pi)] });
+            notify('Fiche ajoutée (panneau Étude).');
+          },
+        },
+        { label: 'Rechercher dans le document', icon: 'search', action: () => { setSidebar(true); setSideTab('search'); setQuery(sel); } },
+        { label: 'Lire à voix haute', icon: 'speak', action: () => speak(sel) },
+      );
+    } else {
+      // annotation sous le curseur ?
+      const hit = [...doc.annotations].reverse().find((a) => {
+        if (a.page !== pi) return false;
+        const boxes = a.rects ?? (a.rect ? [a.rect] : []);
+        if (a.points?.length) {
+          const xs = a.points.map((p) => p[0]);
+          const ys = a.points.map((p) => p[1]);
+          boxes.push({ x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) });
+        }
+        return boxes.some((b) => x >= b.x - 4 && x <= b.x + Math.max(b.w, 18) + 4 && y >= b.y - 4 && y <= b.y + Math.max(b.h, 18) + 4);
+      });
+      if (hit) {
+        items.push(
+          { header: 'Annotation' },
+          ...(hit.text ? [{ label: 'Copier le texte', icon: 'copy' as IconName, action: () => navigator.clipboard?.writeText(hit.text!) }] : []),
+          ...(['highlight', 'underline', 'strike', 'ink', 'rect', 'ellipse', 'arrow', 'text'].includes(hit.kind)
+            ? ['#ffeb3b', '#8bc34a', '#4fc3f7', '#f48fb1', '#e53935'].map((c) => ({
+                label: { '#ffeb3b': 'Jaune', '#8bc34a': 'Vert', '#4fc3f7': 'Bleu', '#f48fb1': 'Rose', '#e53935': 'Rouge' }[c]!,
+                icon: 'palette' as IconName,
+                action: () => setAnns((l) => l.map((a) => (a.id === hit.id ? { ...a, color: c } : a))),
+              }))
+            : []),
+          { label: "Supprimer l'annotation", icon: 'trash', danger: true, action: () => onDelete(hit.id) },
+          'sep',
+        );
+      }
+      items.push(
+        { header: 'Ajouter ici' },
+        { label: 'Note', icon: 'note', action: () => window.dispatchEvent(new CustomEvent('nova:edit-at', { detail: { page: pi, x, y, kind: 'note' } })) },
+        { label: 'Texte', icon: 'text', action: () => window.dispatchEvent(new CustomEvent('nova:edit-at', { detail: { page: pi, x, y, kind: 'text' } })) },
+        {
+          label: 'Ma signature',
+          icon: 'signature',
+          action: async () => {
+            const sig = signature ?? (await pickSignature());
+            if (!sig) return;
+            const img = new Image();
+            img.onload = () => {
+              const w = 160;
+              const h = (img.height / img.width) * w;
+              onAdd({ id: uid(), page: pi, kind: 'image', color: '#000', opacity: 1, strokeWidth: 1, rect: { x: x - w / 2, y: y - h / 2, w, h }, dataUrl: sig, createdAt: Date.now() });
+            };
+            img.src = sig;
+          },
+        },
+        {
+          label: 'Tampon « Approuvé »',
+          icon: 'stamp',
+          action: () => {
+            const src = makeStamp('APPROUVÉ', '#2e7d32');
+            const img = new Image();
+            img.onload = () => {
+              const w = 170;
+              const h = (img.height / img.width) * w;
+              onAdd({ id: uid(), page: pi, kind: 'image', color: '#000', opacity: 0.9, strokeWidth: 1, rect: { x: x - w / 2, y: y - h / 2, w, h }, dataUrl: src, createdAt: Date.now() });
+            };
+            img.src = src;
+          },
+        },
+        'sep',
+        { header: 'Outils' },
+        { label: 'Surligner', icon: 'highlight', shortcut: 'H', action: () => setTool('highlight') },
+        { label: 'Dessin libre', icon: 'ink', shortcut: 'D', action: () => setTool('ink') },
+        { label: 'Rectangle', icon: 'rect', shortcut: 'R', action: () => setTool('rect') },
+        { label: 'Mesurer', icon: 'measure', shortcut: 'M', action: () => setTool('measure') },
+        { label: 'Caviarder', icon: 'redact', action: () => setTool('redact') },
+        'sep',
+        ...pageMenuItems(pi),
+        'sep',
+        { label: 'Présenter depuis cette page', icon: 'present', action: () => { goTo(pi); setPresenting(true); } },
+      );
+    }
+    setMenu({ x: e.clientX, y: e.clientY, items });
+  };
+
+  const onThumbMenu = (e: React.MouseEvent, i: number) => {
+    e.preventDefault();
+    setMenu({ x: e.clientX, y: e.clientY, items: [{ label: 'Aller à la page', icon: 'pages', action: () => goTo(i) }, 'sep', ...pageMenuItems(i)] });
+  };
+
+  const onTabMenu = (e: React.MouseEvent, id: string) => {
+    e.preventDefault();
+    const d = docs.find((x) => x.id === id);
+    if (!d) return;
+    setMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        { header: d.name },
+        { label: 'Enregistrer', icon: 'save', shortcut: 'Ctrl+S', action: () => { setActiveId(id); setTimeout(() => save(), 50); } },
+        { label: 'Afficher dans la bibliothèque', icon: 'library', action: () => setPanel('library') },
+        { label: 'Présenter', icon: 'present', action: () => { setActiveId(id); setPresenting(true); } },
+        'sep',
+        { label: 'Fermer', icon: 'close', action: () => closeDoc(id) },
+        { label: 'Fermer les autres onglets', icon: 'close', disabled: docs.length < 2, action: () => docs.filter((x) => x.id !== id).forEach((x) => closeDoc(x.id)) },
+      ],
+    });
   };
 
   const toggleVoice = () => {
@@ -689,20 +894,22 @@ export default function App() {
       }}
     >
       <header className="topbar">
-        <div className="brand">
-          <img className="logo" src="./icon.svg" alt="" /> Nova<b>PDF</b>
-        </div>
-        <button onClick={openDialog} title="Ouvrir (Ctrl+O)">Ouvrir</button>
+        {doc && (
+          <div className="brand" title="Nova PDF">
+            <img className="logo" src="./icon.svg" alt="Nova PDF" />
+          </div>
+        )}
+        <button className="tb" onClick={openDialog} title="Ouvrir (Ctrl+O)"><Icon name="open" /><span>Ouvrir</span></button>
         {doc && (
           <>
-            <button onClick={() => save()} title="Enregistrer (Ctrl+S)" className={doc.dirty ? 'primary' : ''}>
-              Enregistrer
+            <button onClick={() => save()} title="Enregistrer (Ctrl+S)" className={`tb ${doc.dirty ? 'primary' : ''}`}>
+              <Icon name="save" /><span>Enregistrer</span>
             </button>
-            <button onClick={() => save(true)} title="Enregistrer sous (Ctrl+Maj+S)">Enregistrer sous</button>
-            <button onClick={print} title="Imprimer (Ctrl+P)">Imprimer</button>
+            <button className="tb icon" onClick={() => save(true)} title="Enregistrer sous (Ctrl+Maj+S)"><Icon name="saveAs" /></button>
+            <button className="tb icon" onClick={print} title="Imprimer (Ctrl+P)"><Icon name="print" /></button>
             <span className="sep" />
-            <button className="icon" onClick={undo} disabled={!doc.undo.length} title="Annuler (Ctrl+Z)">↶</button>
-            <button className="icon" onClick={redo} disabled={!doc.redo.length} title="Rétablir (Ctrl+Y)">↷</button>
+            <button className="icon" onClick={undo} disabled={!doc.undo.length} title="Annuler (Ctrl+Z)"><Icon name="undo" /></button>
+            <button className="icon" onClick={redo} disabled={!doc.redo.length} title="Rétablir (Ctrl+Y)"><Icon name="redo" /></button>
             <span className="sep" />
             <div className="tools" role="toolbar" aria-label="Outils d'annotation">
               {TOOLS.map((t) => (
@@ -713,7 +920,7 @@ export default function App() {
                   title={`${t.label}${t.key ? ` (${t.key.toUpperCase()})` : ''}`}
                   aria-pressed={tool === t.id}
                 >
-                  {t.icon}
+                  <Icon name={t.id as IconName} />
                 </button>
               ))}
             </div>
@@ -787,24 +994,36 @@ export default function App() {
         <span className="spacer" />
         {speechSupported() && (
           <button className={`icon ${voiceOn ? 'active rec' : ''}`} onClick={toggleVoice} title="Commandes vocales : « page suivante », « page 12 », « cherche … », « note … »">
-            🎙
+            <Icon name="mic" />
           </button>
         )}
         {voiceHeard && <span className="voice-heard">« {voiceHeard} »</span>}
+        {nativeUpdate && (
+          <button
+            className="primary"
+            title={`Installer Nova PDF ${nativeUpdate.version} et redémarrer`}
+            onClick={() => {
+              notify(`Installation de la version ${nativeUpdate.version}…`);
+              nativeUpdate.install(() => {}).catch((e) => notify(`Échec de la mise à jour : ${(e as Error).message}`));
+            }}
+          >
+            ↻ Mettre à jour ({nativeUpdate.version})
+          </button>
+        )}
         {updateReady && (
           <button className="primary" onClick={applyAppUpdate} title="Une nouvelle version est prête">
             ↻ Mettre à jour
           </button>
         )}
         <button className="icon" onClick={() => setSettings({ ...settings, theme: dark ? 'light' : 'dark' })} title="Thème clair / sombre">
-          {dark ? '☀' : '☾'}
+          <Icon name={dark ? 'sun' : 'moon'} />
         </button>
       </header>
 
       {docs.length > 0 && (
         <nav className="tabs">
           {docs.map((d) => (
-            <div key={d.id} className={`tab ${d.id === activeId ? 'active' : ''}`} onClick={() => setActiveId(d.id)} title={d.name}>
+            <div key={d.id} className={`tab ${d.id === activeId ? 'active' : ''}`} onClick={() => setActiveId(d.id)} onContextMenu={(e) => onTabMenu(e, d.id)} title={d.name}>
               <span>{d.dirty ? '● ' : ''}{d.name}</span>
               <button
                 className="icon"
@@ -839,6 +1058,7 @@ export default function App() {
             onDelete={onDelete}
             tab={sideTab}
             setTab={setSideTab}
+            onThumbMenu={onThumbMenu}
           />
         )}
 
@@ -846,7 +1066,7 @@ export default function App() {
           {doc ? (
             <>
               <div className="viewbar">
-                <button className="icon" onClick={() => setSidebar(!sidebar)} title="Panneau latéral">☰</button>
+                <button className="icon" onClick={() => setSidebar(!sidebar)} title="Panneau latéral"><Icon name="sidebar" /></button>
                 <span className="pager">
                   <input
                     aria-label="Page"
@@ -858,9 +1078,9 @@ export default function App() {
                   />
                   / {doc.sizes.length}
                 </span>
-                <button className="icon" onClick={() => zoom(1 / 1.15)} title="Zoom arrière">−</button>
+                <button className="icon" onClick={() => zoom(1 / 1.15)} title="Zoom arrière"><Icon name="zoomOut" /></button>
                 <span className="zoom">{Math.round(scale * 100)} %</span>
-                <button className="icon" onClick={() => zoom(1.15)} title="Zoom avant">+</button>
+                <button className="icon" onClick={() => zoom(1.15)} title="Zoom avant"><Icon name="zoomIn" /></button>
                 <select value={fit ?? ''} onChange={(e) => setFit((e.target.value || null) as typeof fit)}>
                   <option value="">Zoom libre</option>
                   <option value="width">Pleine largeur</option>
@@ -870,13 +1090,14 @@ export default function App() {
                   <option value="single">Une page</option>
                   <option value="double">Deux pages</option>
                 </select>
-                <button className={`icon ${night ? 'active' : ''}`} onClick={() => setNight(!night)} title="Mode nuit (inverse les couleurs des pages)">◐</button>
-                <button className="icon" onClick={() => setFocus(!focus)} title="Mode concentration (F)">⛶</button>
-                <button className="icon" onClick={() => setPresenting(true)} title="Présenter (plein écran, pointeur laser)">▶</button>
-                <button className="icon" disabled={!doc.texts} onClick={() => setTranslating(true)} title="Traduction côte à côte">🌐</button>
-                <button className={`icon ${settings.readingRuler ? 'active' : ''}`} onClick={() => setSettings({ ...settings, readingRuler: !settings.readingRuler })} title="Règle de lecture">═</button>
+                <button className={`icon ${night ? 'active' : ''}`} onClick={() => setNight(!night)} title="Mode nuit (inverse les couleurs des pages)"><Icon name="night" /></button>
+                <button className="icon" onClick={() => setFocus(!focus)} title="Mode concentration (F)"><Icon name="focus" /></button>
+                <button className="icon" onClick={() => setPresenting(true)} title="Présenter (plein écran, pointeur laser)"><Icon name="present" /></button>
+                <button className="icon" disabled={!doc.texts} onClick={() => setTranslating(true)} title="Traduction côte à côte"><Icon name="translate" /></button>
+                <button className={`icon ${settings.readingRuler ? 'active' : ''}`} onClick={() => setSettings({ ...settings, readingRuler: !settings.readingRuler })} title="Règle de lecture"><Icon name="ruler" /></button>
                 {doc.review && <span className="ok-badge">● relecture partagée</span>}
               </div>
+              <div className="viewer-host" onContextMenu={onViewerMenu}>
               <Viewer
                 ref={viewer}
                 doc={doc.pdf}
@@ -896,6 +1117,7 @@ export default function App() {
                 refs={refs}
                 ruler={settings.readingRuler}
               />
+              </div>
             </>
           ) : (
             <Welcome
@@ -984,18 +1206,18 @@ export default function App() {
         <nav className="rail" aria-label="Panneaux">
           {(
             [
-              ['library', '📚', 'Biblio', false],
-              ['ai', '✦', 'IA', true],
-              ['notes', '✎', 'Notes', true],
-              ['study', '🎓', 'Étude', true],
-              ['reading', '📖', 'Lecture', true],
-              ['form', '☑', 'Formulaire', true],
-              ['organize', '▦', 'Pages', true],
-              ['tools', '⚒', 'Outils', true],
-              ['share', '⇄', 'Partager', false],
-              ['settings', 'ⓘ', 'Infos', false],
-            ] as [Panel, string, string, boolean][]
-          ).map(([id, icon, label, needsDoc]) => (
+              ['library', 'Biblio', false],
+              ['ai', 'IA', true],
+              ['notes', 'Notes', true],
+              ['study', 'Étude', true],
+              ['reading', 'Lecture', true],
+              ['form', 'Formulaire', true],
+              ['organize', 'Pages', true],
+              ['tools', 'Outils', true],
+              ['share', 'Partager', false],
+              ['settings', 'Infos', false],
+            ] as [Panel, string, boolean][]
+          ).map(([id, label, needsDoc]) => (
             <button
               key={id}
               className={panel === id ? 'active' : ''}
@@ -1003,9 +1225,9 @@ export default function App() {
               onClick={() => setPanel(panel === id ? null : id)}
               title={id === 'settings' ? 'Infos, paramètres et mises à jour' : label}
             >
-              <span aria-hidden>{icon}</span>
+              <span className="rail-ico"><Icon name={id as IconName} size={20} /></span>
               <small>{label}</small>
-              {id === 'settings' && updateReady && <i className="dot" />}
+              {id === 'settings' && (updateReady || nativeUpdate) && <i className="dot" />}
             </button>
           ))}
         </nav>
@@ -1054,6 +1276,7 @@ export default function App() {
           }}
         />
       )}
+      {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
       {dragOver && <div className="drop-overlay">Déposez vos PDF ici</div>}
       {toast && <div className="toast" role="status">{toast}</div>}
     </div>

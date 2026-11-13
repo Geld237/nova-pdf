@@ -144,6 +144,28 @@ function PageViewImpl(p: Props) {
     if (textRef.current) markHits(textRef.current, p.searchQuery);
   }, [p.searchQuery]);
 
+  // Actions demandées par le menu contextuel
+  const markRef = useRef<(k: 'highlight' | 'underline' | 'strike') => void>(() => {});
+  useEffect(() => {
+    const onEdit = (e: Event) => {
+      const d = (e as CustomEvent).detail as { page: number; x: number; y: number; kind: 'text' | 'note' };
+      if (d.page !== p.pageIndex) return;
+      setEditor({ x: d.x, y: d.y, kind: d.kind });
+      setEditorText('');
+    };
+    const onMark = (e: Event) => {
+      const sel = window.getSelection();
+      if (!sel?.rangeCount || !wrapRef.current?.contains(sel.getRangeAt(0).startContainer)) return;
+      markRef.current((e as CustomEvent).detail.kind);
+    };
+    window.addEventListener('nova:edit-at', onEdit);
+    window.addEventListener('nova:mark-selection', onMark);
+    return () => {
+      window.removeEventListener('nova:edit-at', onEdit);
+      window.removeEventListener('nova:mark-selection', onMark);
+    };
+  }, [p.pageIndex]);
+
   const toPage = (e: { clientX: number; clientY: number }): [number, number] => {
     const r = wrapRef.current!.getBoundingClientRect();
     return [(e.clientX - r.left) / p.scale, (e.clientY - r.top) / p.scale];
@@ -160,7 +182,10 @@ function PageViewImpl(p: Props) {
 
   // --- Outils basés sur la sélection de texte -------------------------------
   const onMouseUp = () => {
-    if (!SELECTION_TOOLS.includes(p.tool)) return;
+    if (SELECTION_TOOLS.includes(p.tool)) markSelection(p.tool as 'highlight' | 'underline' | 'strike');
+  };
+
+  const markSelection = (kind: 'highlight' | 'underline' | 'strike') => {
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed) return;
     const wrap = wrapRef.current!.getBoundingClientRect();
@@ -179,16 +204,17 @@ function PageViewImpl(p: Props) {
     }
     const merged = mergeRects(rects);
     if (!merged.length) return;
-    const kind = p.tool as 'highlight' | 'underline' | 'strike';
     p.onAdd({
       ...base(),
       kind,
+      color: kind === 'highlight' && ['#e53935', '#3949ab', '#212121'].includes(p.opts.color) ? '#ffeb3b' : p.opts.color,
       opacity: kind === 'highlight' ? Math.min(p.opts.opacity, 0.45) : p.opts.opacity,
       rects: merged,
       text: sel.toString().replace(/\s+/g, ' ').trim(),
     });
     sel.removeAllRanges();
   };
+  markRef.current = markSelection;
 
   // --- Outils de dessin ---------------------------------------------------
   const onPointerDown = (e: React.PointerEvent) => {

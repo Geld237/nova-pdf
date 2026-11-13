@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { Section, ToolNav } from './ToolSection';
+import { Icon, type IconName } from '../icons';
 import { canvasToBlob, extractAllText, openPdf, renderPageToCanvas, type PDFDocumentProxy } from '../pdf/engine';
 import {
   addPageNumbers, addWatermark, baseName, diffLines, download, extractPages, mergePdfs,
@@ -31,6 +33,74 @@ export interface DocCtx {
   getBytesRaw: () => Promise<Uint8Array>;
   markReview: () => void;
   startScan: () => void;
+  openPanel: (p: 'organize') => void;
+}
+
+/** Catalogue des outils : icône, couleur de tuile (dégradé façon iOS) et groupe. */
+const CATALOG: { group: string; items: { id: string; label: string; icon: IconName; color: [string, string]; keywords?: string }[] }[] = [
+  {
+    group: 'Organiser',
+    items: [
+      { id: 'merge', label: 'Fusionner', icon: 'merge', color: ['#5ac8fa', '#007aff'], keywords: 'combiner joindre' },
+      { id: 'split', label: 'Découper', icon: 'split', color: ['#ffb340', '#ff9500'], keywords: 'diviser séparer' },
+      { id: 'extract', label: 'Extraire des pages', icon: 'extract', color: ['#4cd9c0', '#00c7be'] },
+      { id: '@organize', label: 'Organiser les pages', icon: 'organize', color: ['#7d7aff', '#5856d6'], keywords: 'trier pivoter supprimer réordonner' },
+      { id: 'nup', label: 'Pages par feuille', icon: 'grid', color: ['#a28bff', '#7a5af8'], keywords: 'imposition' },
+      { id: 'resize', label: 'Format des pages', icon: 'resize', color: ['#da8fff', '#af52de'], keywords: 'a4 letter taille' },
+      { id: 'crop', label: 'Recadrer', icon: 'crop', color: ['#ff6b9a', '#ff2d55'], keywords: 'rogner marges' },
+    ],
+  },
+  {
+    group: 'Créer et convertir',
+    items: [
+      { id: 'create', label: 'Créer un PDF', icon: 'create', color: ['#5fe07a', '#34c759'], keywords: 'images vierge texte' },
+      { id: '@scan', label: 'Scanner', icon: 'scan', color: ['#8e8e93', '#636366'], keywords: 'caméra photo' },
+      { id: 'convert', label: 'Convertir', icon: 'convert', color: ['#ff6961', '#ff3b30'], keywords: 'word docx html images' },
+      { id: 'export', label: 'Exporter', icon: 'export', color: ['#64d2ff', '#32ade6'], keywords: 'png jpg texte markdown' },
+      { id: 'ocr', label: 'OCR', icon: 'ocr', color: ['#ffd60a', '#ffcc00'], keywords: 'reconnaissance texte scan cherchable' },
+    ],
+  },
+  {
+    group: 'Modifier',
+    items: [
+      { id: 'watermark', label: 'Filigrane', icon: 'watermark', color: ['#70d7ff', '#30b0c7'] },
+      { id: 'pagenum', label: 'Numéroter', icon: 'pagenum', color: ['#98989d', '#6e6e73'], keywords: 'numéros de page' },
+      { id: 'bookmarks', label: 'Signets', icon: 'bookmarks', color: ['#ff7b72', '#ff453a'], keywords: 'sommaire' },
+      { id: 'attach', label: 'Pièces jointes', icon: 'attach', color: ['#aeaeb2', '#8e8e93'], keywords: 'joindre fichier' },
+      { id: 'viewer', label: "Préférences d'affichage", icon: 'viewer', color: ['#409cff', '#0a84ff'] },
+      { id: 'flatten', label: 'Aplatir', icon: 'flatten', color: ['#c69c6d', '#a2845e'], keywords: 'figer' },
+    ],
+  },
+  {
+    group: 'Protéger',
+    items: [
+      { id: 'protect', label: 'Protéger', icon: 'protect', color: ['#409cff', '#0060df'], keywords: 'mot de passe chiffrer' },
+      { id: 'unlock', label: 'Déverrouiller', icon: 'unlock', color: ['#5fe07a', '#28a745'], keywords: 'mot de passe' },
+      { id: 'pii', label: 'Anonymiser', icon: 'pii', color: ['#48484a', '#1c1c1e'], keywords: 'données personnelles caviarder rgpd' },
+      { id: 'meta', label: 'Propriétés', icon: 'meta', color: ['#aeaeb2', '#636366'], keywords: 'métadonnées auteur titre' },
+    ],
+  },
+  {
+    group: 'Optimiser et analyser',
+    items: [
+      { id: 'compress', label: 'Compresser', icon: 'compress', color: ['#66d47e', '#30b94d'], keywords: 'réduire taille' },
+      { id: 'repair', label: 'Réparer', icon: 'repair', color: ['#ffb340', '#ff8a00'], keywords: 'corrompu' },
+      { id: 'compare', label: 'Comparer', icon: 'compare', color: ['#bf8bff', '#8e44ec'], keywords: 'différences versions' },
+      { id: 'refs', label: 'Références', icon: 'refs', color: ['#7d7aff', '#4b48d6'], keywords: 'bibliographie bibtex zotero doi' },
+    ],
+  },
+];
+const ALL_TOOLS = CATALOG.flatMap((g) => g.items);
+
+function ToolTile({ t, onClick }: { t: (typeof ALL_TOOLS)[number]; onClick: () => void }) {
+  return (
+    <button className="tool-tile" onClick={onClick} title={t.label}>
+      <span className="tile-ico" style={{ background: `linear-gradient(160deg, ${t.color[0]}, ${t.color[1]})` }}>
+        <Icon name={t.icon} size={24} />
+      </span>
+      <span className="tile-label">{t.label}</span>
+    </button>
+  );
 }
 
 const pickFiles = (accept: string, multiple = true) =>
@@ -45,6 +115,15 @@ const pickFiles = (accept: string, multiple = true) =>
 
 export function ToolsPanel({ ctx }: { ctx: DocCtx }) {
   const [busy, setBusy] = useState<string | null>(null);
+  const [active, setActive] = useState<string | null>(null);
+  const [filter, setFilter] = useState('');
+  const open = (id: string) => {
+    if (id === '@organize') ctx.openPanel('organize');
+    else if (id === '@scan') ctx.startScan();
+    else setActive(id);
+  };
+  const current = ALL_TOOLS.find((t) => t.id === active);
+  const f = filter.trim().toLowerCase();
   const wrap = (label: string, fn: () => Promise<void>) => async () => {
     setBusy(label);
     try {
@@ -75,14 +154,39 @@ export function ToolsPanel({ ctx }: { ctx: DocCtx }) {
   const base = baseName(ctx.name);
 
   return (
+    <ToolNav.Provider value={{ active }}>
     <div className="panel tools-panel">
-      <header className="panel-head">
-        <h2>Outils</h2>
-      </header>
+      {current ? (
+        <header className="panel-head tool-head">
+          <button className="icon back" onClick={() => setActive(null)} title="Tous les outils"><Icon name="back" /></button>
+          <span className="tile-ico small" style={{ background: `linear-gradient(160deg, ${current.color[0]}, ${current.color[1]})` }}>
+            <Icon name={current.icon} size={16} />
+          </span>
+          <h2>{current.label}</h2>
+        </header>
+      ) : (
+        <>
+          <header className="panel-head">
+            <h2>Outils</h2>
+          </header>
+          <input type="search" className="tool-search" placeholder="Rechercher un outil…" value={filter} onChange={(e) => setFilter(e.target.value)} />
+          {CATALOG.map((g) => {
+            const items = g.items.filter((t) => !f || `${t.label} ${t.keywords ?? ''} ${g.group}`.toLowerCase().includes(f));
+            if (!items.length) return null;
+            return (
+              <div key={g.group} className="tool-group">
+                <h3 className="group">{g.group}</h3>
+                <div className="tool-grid">
+                  {items.map((t) => <ToolTile key={t.id} t={t} onClick={() => open(t.id)} />)}
+                </div>
+              </div>
+            );
+          })}
+        </>
+      )}
       {busy && <p className="busy">⏳ {busy}…</p>}
 
-      <details open>
-        <summary>Fusionner</summary>
+      <Section id="merge" title="Fusionner">
         <p className="muted">Ajoute d'autres PDF à la fin de ce document.</p>
         <button
           onClick={wrap('Fusion', async () => {
@@ -94,10 +198,9 @@ export function ToolsPanel({ ctx }: { ctx: DocCtx }) {
         >
           Ajouter des PDF…
         </button>
-      </details>
+      </Section>
 
-      <details>
-        <summary>Découper</summary>
+      <Section id="split" title="Découper">
         <label>
           Plages (une par fichier)
           <input value={splitSpec} onChange={(e) => setSplitSpec(e.target.value)} placeholder="1-3, 4-6, 7-" />
@@ -122,10 +225,9 @@ export function ToolsPanel({ ctx }: { ctx: DocCtx }) {
             Une page par fichier
           </button>
         </div>
-      </details>
+      </Section>
 
-      <details>
-        <summary>Extraire des pages</summary>
+      <Section id="extract" title="Extraire des pages">
         <label>
           Pages
           <input value={extractSpec} onChange={(e) => setExtractSpec(e.target.value)} placeholder="1, 3-5" />
@@ -138,10 +240,9 @@ export function ToolsPanel({ ctx }: { ctx: DocCtx }) {
         >
           Extraire en PDF
         </button>
-      </details>
+      </Section>
 
-      <details>
-        <summary>Filigrane</summary>
+      <Section id="watermark" title="Filigrane">
         <label>
           Texte <input value={wm.text} onChange={(e) => setWm({ ...wm, text: e.target.value })} />
         </label>
@@ -159,10 +260,9 @@ export function ToolsPanel({ ctx }: { ctx: DocCtx }) {
         <button onClick={wrap('Filigrane', async () => ctx.replace(await addWatermark(await ctx.getBytes(), wm.text, wm), 'Filigrane ajouté'))}>
           Appliquer à toutes les pages
         </button>
-      </details>
+      </Section>
 
-      <details>
-        <summary>Numéroter les pages</summary>
+      <Section id="pagenum" title="Numéroter les pages">
         <label>
           Format <input value={num.format} onChange={(e) => setNum({ ...num, format: e.target.value })} />
         </label>
@@ -182,10 +282,9 @@ export function ToolsPanel({ ctx }: { ctx: DocCtx }) {
         <button onClick={wrap('Numérotation', async () => ctx.replace(await addPageNumbers(await ctx.getBytes(), num), 'Pages numérotées'))}>
           Numéroter
         </button>
-      </details>
+      </Section>
 
-      <details>
-        <summary>OCR — rendre un scan cherchable</summary>
+      <Section id="ocr" title="OCR — rendre un scan cherchable">
         <p className="muted">Reconnaissance de texte locale (Tesseract). Les données de langue sont téléchargées une fois.</p>
         <div className="row">
           <label>
@@ -228,10 +327,9 @@ export function ToolsPanel({ ctx }: { ctx: DocCtx }) {
           </div>
         )}
         {ocrText && <textarea className="ocr-out" readOnly value={ocrText} rows={8} />}
-      </details>
+      </Section>
 
-      <details>
-        <summary>Exporter</summary>
+      <Section id="export" title="Exporter">
         <div className="col">
           <button
             onClick={wrap('Export image', async () => {
@@ -269,10 +367,9 @@ export function ToolsPanel({ ctx }: { ctx: DocCtx }) {
             Markdown (.md)
           </button>
         </div>
-      </details>
+      </Section>
 
-      <details>
-        <summary>Propriétés et confidentialité</summary>
+      <Section id="meta" title="Propriétés et confidentialité">
         {meta && (
           <>
             {(['title', 'author', 'subject', 'keywords'] as const).map((k) => (
@@ -296,10 +393,9 @@ export function ToolsPanel({ ctx }: { ctx: DocCtx }) {
             </div>
           </>
         )}
-      </details>
+      </Section>
 
-      <details>
-        <summary>Comparer avec une autre version</summary>
+      <Section id="compare" title="Comparer avec une autre version">
         <button
           onClick={wrap('Comparaison', async () => {
             const [f] = await pickFiles('application/pdf', false);
@@ -329,13 +425,12 @@ export function ToolsPanel({ ctx }: { ctx: DocCtx }) {
             </div>
           </>
         )}
-      </details>
-
-      <h3 className="group">Confidentialité et recherche</h3>
+      </Section>
       <PiiTool ctx={ctx} ai={ctx.ai} />
       <RefsTool ctx={ctx} />
 
       <MoreTools ctx={ctx} outline={ctx.outline} run={wrap} />
     </div>
+    </ToolNav.Provider>
   );
 }

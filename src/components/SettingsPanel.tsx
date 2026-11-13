@@ -6,9 +6,9 @@ import {
 import { download } from '../pdf/tools';
 import {
   APP_COMMIT, APP_VERSION, BUILD_DATE, REPO, applyAppUpdate, checkForAppUpdate, fetchLatestCommit,
-  fetchLatestRelease, isNewer, onUpdateState, updateState, type ReleaseInfo, type RemoteVersion,
+  fetchLatestRelease, isNewer, onUpdateState, updateState, checkNativeUpdate, type NativeUpdate, type ReleaseInfo, type RemoteVersion,
 } from '../update';
-import { isNative, platformName } from '../platform';
+import { isNative, isTauri, platformName } from '../platform';
 import { PROFILE_LABELS, loadProfile, saveProfile, type Profile } from '../profile';
 
 interface DocInfo {
@@ -217,6 +217,8 @@ function Updates({ notify }: { notify: (m: string) => void }) {
   const [remoteErr, setRemoteErr] = useState<string | null>(null);
   const [install, setInstall] = useState<(Event & { prompt: () => Promise<void> }) | null>(null);
   const [release, setRelease] = useState<ReleaseInfo | null | undefined>(undefined);
+  const [nativeUp, setNativeUp] = useState<NativeUpdate | null | undefined>(undefined);
+  const [installing, setInstalling] = useState<number | null>(null);
 
   useEffect(() => {
     const off = onUpdateState(() => force((n) => n + 1));
@@ -239,6 +241,7 @@ function Updates({ notify }: { notify: (m: string) => void }) {
       isNative ? Promise.resolve(false) : checkForAppUpdate(),
       isNative ? Promise.resolve() : fetchLatestCommit().then(setRemote).catch((e) => setRemoteErr((e as Error).message)),
       fetchLatestRelease().then(setRelease).catch((e) => setRemoteErr((e as Error).message)),
+      isTauri ? checkNativeUpdate().then(setNativeUp).catch(() => setNativeUp(null)) : Promise.resolve(),
     ]);
     if (!isNative && !app) notify('Aucune nouvelle version de l’application à installer.');
   };
@@ -283,6 +286,23 @@ function Updates({ notify }: { notify: (m: string) => void }) {
         </div>
       )}
       {remoteErr && <p className="muted">GitHub injoignable ({remoteErr}).</p>}
+      {nativeUp && (
+        <div className="update-box">
+          <b>↻ Nova PDF {nativeUp.version} est disponible</b>
+          <p className="muted">Téléchargement et installation automatiques, puis redémarrage. Vos documents, notes et annotations sont conservés.</p>
+          {installing !== null ? (
+            <div className="progress">
+              <div className="bar" style={{ width: `${Math.round(installing * 100)}%` }} />
+              <small>Installation… {Math.round(installing * 100)} %</small>
+            </div>
+          ) : (
+            <button className="primary" onClick={() => { setInstalling(0); nativeUp.install(setInstalling).catch((e) => { setInstalling(null); notify(`Échec : ${(e as Error).message}`); }); }}>
+              Mettre à jour maintenant
+            </button>
+          )}
+        </div>
+      )}
+      {nativeUp === null && isTauri && <p className="muted">✓ L'application est à jour (mise à jour automatique).</p>}
       {release === null && <p className="muted">Aucune version installable publiée pour l'instant.</p>}
       {release && (
         <div className="update-box">

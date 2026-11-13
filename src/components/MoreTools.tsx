@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Section } from './ToolSection';
 import { extractAllText } from '../pdf/engine';
 import {
   PAGE_SIZES, attachFile, blankPdf, compressRaster, cropPages, extractImages, nUp, repairPdf, resizePages,
@@ -50,9 +51,7 @@ export function MoreTools({ ctx, outline, run }: { ctx: DocCtx; outline: Outline
 
   return (
     <>
-      <h3 className="group">Créer et convertir</h3>
-      <details>
-        <summary>Créer un PDF</summary>
+      <Section id="create" title="Créer un PDF">
         <div className="col">
           <button onClick={run('Conversion', async () => {
             const files = await pick('image/png,image/jpeg');
@@ -74,10 +73,9 @@ export function MoreTools({ ctx, outline, run }: { ctx: DocCtx; outline: Outline
         </label>
         <button disabled={!plain.trim()} onClick={run('Création', async () => ctx.openNew(await textToPdf(plain, 'Texte'), 'texte.pdf'))}>Texte → PDF</button>
         <p className="muted">Word/Excel/PowerPoint → PDF : utilisez « Imprimer → Enregistrer en PDF » de votre suite bureautique (conversion locale prévue dans la feuille de route).</p>
-      </details>
+      </Section>
 
-      <details>
-        <summary>Convertir le PDF en…</summary>
+      <Section id="convert" title="Convertir le PDF en…">
         <div className="col">
           <button onClick={run('Export Word', async () => {
             const t = ctx.texts ?? (await extractAllText(ctx.pdf));
@@ -94,11 +92,8 @@ export function MoreTools({ ctx, outline, run }: { ctx: DocCtx; outline: Outline
           })}>Extraire les images intégrées</button>
         </div>
         <p className="muted">PNG, JPG, texte et Markdown : section « Exporter » ci-dessus.</p>
-      </details>
-
-      <h3 className="group">Protéger</h3>
-      <details>
-        <summary>Protéger par mot de passe (AES-256)</summary>
+      </Section>
+      <Section id="protect" title="Protéger par mot de passe (AES-256)">
         <label>Mot de passe d'ouverture <input type="password" value={pw.user} onChange={(e) => setPw({ ...pw, user: e.target.value })} /></label>
         <label>Mot de passe propriétaire (droits) <input type="password" value={pw.owner} onChange={(e) => setPw({ ...pw, owner: e.target.value })} placeholder="identique si vide" /></label>
         <div className="perm-grid">
@@ -117,9 +112,8 @@ export function MoreTools({ ctx, outline, run }: { ctx: DocCtx; outline: Outline
           download(await protectPdf(await ctx.getBytes(), pw.user, pw.owner, perms), `${base}-protege.pdf`);
           ctx.notify('PDF protégé téléchargé.');
         })}>Télécharger le PDF protégé</button>
-      </details>
-      <details>
-        <summary>Déverrouiller un PDF</summary>
+      </Section>
+      <Section id="unlock" title="Déverrouiller un PDF">
         <p className="muted">Les PDF ouverts avec leur mot de passe sont déjà déverrouillés : il suffit d'enregistrer. Pour un autre fichier :</p>
         <button onClick={run('Déverrouillage', async () => {
           const [f] = await pick('application/pdf', false);
@@ -128,11 +122,8 @@ export function MoreTools({ ctx, outline, run }: { ctx: DocCtx; outline: Outline
           if (p === null) return;
           ctx.openNew(await unlockPdf(new Uint8Array(await f.arrayBuffer()), p), f.name.replace(/\.pdf$/i, '-deverrouille.pdf'));
         })}>Choisir un fichier protégé…</button>
-      </details>
-
-      <h3 className="group">Optimiser</h3>
-      <details>
-        <summary>Compresser</summary>
+      </Section>
+      <Section id="compress" title="Compresser">
         <button onClick={run('Optimisation', async () => {
           const before = (await ctx.getBytes()).length;
           const out = await optimize(await ctx.getBytes());
@@ -157,19 +148,15 @@ export function MoreTools({ ctx, outline, run }: { ctx: DocCtx; outline: Outline
         })}>Compression forte (pages en images)</button>
         {compProgress && <small className="muted">{compProgress}</small>}
         <p className="muted">La compression forte rend le texte non sélectionnable ; relancez l'OCR si besoin.</p>
-      </details>
-      <details>
-        <summary>Réparer</summary>
+      </Section>
+      <Section id="repair" title="Réparer">
         <p className="muted">Reconstruit la structure du fichier (tables, références). En dernier recours, les pages sont reconstruites à partir de leur rendu.</p>
         <button onClick={run('Réparation', async () => {
           const { bytes, method } = await repairPdf(await ctx.getBytes(), ctx.pdf);
           await ctx.replace(bytes, `Réparé : ${method}`);
         })}>Réparer ce document</button>
-      </details>
-
-      <h3 className="group">Mise en page</h3>
-      <details>
-        <summary>Recadrer</summary>
+      </Section>
+      <Section id="crop" title="Recadrer">
         <div className="row">
           {(['top', 'right', 'bottom', 'left'] as const).map((k) => (
             <label key={k}>{{ top: 'Haut', right: 'Droite', bottom: 'Bas', left: 'Gauche' }[k]} (mm)
@@ -184,9 +171,8 @@ export function MoreTools({ ctx, outline, run }: { ctx: DocCtx; outline: Outline
           </select>
         </label>
         <button onClick={run('Recadrage', async () => ctx.replace(await cropPages(await ctx.getBytes(), crop, crop.scope === 'all' ? 'all' : [ctx.currentPage]), 'Pages recadrées'))}>Recadrer</button>
-      </details>
-      <details>
-        <summary>Plusieurs pages par feuille</summary>
+      </Section>
+      <Section id="nup" title="Plusieurs pages par feuille">
         <div className="row">
           <label>Pages par feuille
             <select value={nup.n} onChange={(e) => setNup({ ...nup, n: +e.target.value as 2 | 4 | 6 | 9 })}>
@@ -200,9 +186,8 @@ export function MoreTools({ ctx, outline, run }: { ctx: DocCtx; outline: Outline
           </label>
         </div>
         <button onClick={run('Imposition', async () => ctx.openNew(await nUp(await ctx.getBytes(), nup.n, nup.size), `${base}-${nup.n}par-feuille.pdf`))}>Créer</button>
-      </details>
-      <details>
-        <summary>Changer le format des pages</summary>
+      </Section>
+      <Section id="resize" title="Changer le format des pages">
         <div className="row">
           <select value={resize} onChange={(e) => setResize(e.target.value)}>
             {Object.keys(PAGE_SIZES).map((s) => <option key={s}>{s}</option>)}
@@ -210,11 +195,8 @@ export function MoreTools({ ctx, outline, run }: { ctx: DocCtx; outline: Outline
           <button onClick={run('Redimensionnement', async () => ctx.replace(await resizePages(await ctx.getBytes(), resize), `Pages au format ${resize}`))}>Appliquer</button>
         </div>
         <p className="muted">Le contenu est mis à l'échelle et centré ; l'orientation de chaque page est conservée.</p>
-      </details>
-
-      <h3 className="group">Structure</h3>
-      <details>
-        <summary>Signets ({marks.length})</summary>
+      </Section>
+      <Section id="bookmarks" title={`Signets (${marks.length})`}>
         <div className="marks">
           {marks.map((m, i) => (
             <div key={i} className="row">
@@ -230,9 +212,8 @@ export function MoreTools({ ctx, outline, run }: { ctx: DocCtx; outline: Outline
           <button onClick={() => setMarks([...marks].sort((a, b) => a.page - b.page))}>Trier</button>
           <button className="primary" onClick={run('Signets', async () => ctx.replace(await setBookmarks(await ctx.getBytes(), marks), 'Signets enregistrés'))}>Enregistrer</button>
         </div>
-      </details>
-      <details>
-        <summary>Pièces jointes</summary>
+      </Section>
+      <Section id="attach" title="Pièces jointes">
         <label>Description (facultative) <input value={attDesc} onChange={(e) => setAttDesc(e.target.value)} /></label>
         <button onClick={run('Pièce jointe', async () => {
           const files = await pick('*/*');
@@ -241,9 +222,8 @@ export function MoreTools({ ctx, outline, run }: { ctx: DocCtx; outline: Outline
           if (files.length) await ctx.replace(b, `${files.length} fichier(s) joint(s)`);
         })}>Joindre des fichiers…</button>
         <p className="muted">Les pièces jointes existantes sont listées dans Infos & paramètres → Document.</p>
-      </details>
-      <details>
-        <summary>Préférences d'affichage</summary>
+      </Section>
+      <Section id="viewer" title="Préférences d'affichage">
         <p className="muted">Comment le PDF s'ouvrira dans les autres lecteurs.</p>
         <label>Disposition
           <select value={prefs.pageLayout} onChange={(e) => setPrefs({ ...prefs, pageLayout: e.target.value as ViewerPrefs['pageLayout'] })}>
@@ -265,12 +245,11 @@ export function MoreTools({ ctx, outline, run }: { ctx: DocCtx; outline: Outline
         <label className="check"><input type="checkbox" checked={prefs.fitWindow} onChange={(e) => setPrefs({ ...prefs, fitWindow: e.target.checked })} /> Ajuster la fenêtre à la page</label>
         <label className="check"><input type="checkbox" checked={prefs.hideToolbar} onChange={(e) => setPrefs({ ...prefs, hideToolbar: e.target.checked })} /> Masquer la barre d'outils</label>
         <button onClick={run('Préférences', async () => ctx.replace(await setViewerPrefs(await ctx.getBytes(), prefs), "Préférences d'affichage enregistrées"))}>Appliquer</button>
-      </details>
-      <details>
-        <summary>Aplatir</summary>
+      </Section>
+      <Section id="flatten" title="Aplatir">
         <p className="muted">Fige les champs de formulaire et les annotations dans le contenu des pages (plus modifiables).</p>
         <button onClick={run('Aplatissement', async () => ctx.replace(await writeFields(await ctx.getBytes(), {}, true), 'Document aplati'))}>Aplatir le document</button>
-      </details>
+      </Section>
     </>
   );
 }

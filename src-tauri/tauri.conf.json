@@ -28,7 +28,14 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": [
+      "nsis",
+      "dmg",
+      "app",
+      "appimage",
+      "deb",
+      "rpm"
+    ],
     "publisher": "Georges Eloundou",
     "copyright": "© 2026 Georges Eloundou — MIT",
     "category": "Productivity",
@@ -67,6 +74,17 @@
     "linux": {
       "deb": {
         "section": "office"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDcxRjdFQzgzQUE0OTdGRjcKUldUM2YwbXFnK3ozY1pCTHpFNy8rZkU4cmIyc3I3Wi8zSXZJMEZsR0l2NWVaOStCZmFCUDh5UTkK",
+      "endpoints": [
+        "https://github.com/Geld237/nova-pdf/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

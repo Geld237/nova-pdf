@@ -8,6 +8,10 @@ Nova PDF fait dans le navigateur ce que font les lecteurs PDF du marché (lire, 
 
 ![Nova PDF — annotations](docs/screenshot-annotations.png)
 
+| Outils | Clic droit | Scanner |
+|---|---|---|
+| ![Outils](docs/screenshot-tools.png) | ![Clic droit](docs/screenshot-context-menu.png) | ![Scanner](docs/screenshot-scan.png) |
+
 | Notes | Scanner | Signature à distance |
 |---|---|---|
 | ![Notes](docs/screenshot-notes.png) | ![Scanner](docs/screenshot-scan.png) | ![Signature](docs/screenshot-signature.png) |
@@ -36,6 +40,10 @@ Nova PDF fait dans le navigateur ce que font les lecteurs PDF du marché (lire, 
 - Couleurs, épaisseur, taille du texte ; gomme ; annuler / rétablir
 - Liste des annotations du document
 - **Carnet** : tous vos surlignages et notes, *tous documents confondus*, mémorisés localement (IndexedDB)
+
+### Ergonomie
+- Icônes au trait fin façon macOS / iOS ; outils présentés en **tuiles colorées** avec recherche
+- **Clic droit partout** : sur une sélection (surligner, expliquer avec l'IA, traduire, citer dans les notes, créer une fiche…), sur une annotation (couleur, supprimer), sur la page (ajouter une note, un texte, sa signature, un tampon ici ; pivoter, dupliquer, extraire, supprimer la page…), sur les miniatures et les onglets
 
 ### Prendre des notes (panneau de droite)
 - Un carnet de notes par document, enregistré automatiquement sur l'appareil
@@ -170,6 +178,12 @@ Toutes les versions sont sur la page **[Releases](https://github.com/Geld237/nov
 
 Toutes les versions partagent le même code : l'application de bureau utilise [Tauri](https://tauri.app) (≈ 5 Mo, WebView du système), les applications mobiles [Capacitor](https://capacitorjs.com). Sur ordinateur, les `.pdf` peuvent être associés à Nova PDF (double-clic, « Ouvrir avec ») ; sur Android et iOS, Nova PDF apparaît dans « Ouvrir avec / Partager ».
 
+### Mises à jour
+
+- **Windows, macOS, Linux** : l'application vérifie au démarrage s'il existe une nouvelle version, la télécharge, l'installe et redémarre (bouton **↻ Mettre à jour** en haut, ou **ⓘ Infos → Mises à jour**). Nécessite le secret `TAURI_SIGNING_PRIVATE_KEY` (voir ci-dessous).
+- **Android** : téléchargez le nouvel `.apk` et ouvrez-le : il s'installe **par-dessus** l'ancienne version (même clé de signature), vos données sont conservées.
+- **Web / iPhone (écran d'accueil)** : mise à jour automatique au prochain lancement.
+
 ### Publier une nouvelle version
 
 ```bash
@@ -179,7 +193,10 @@ git commit -am "v0.4.0" && git push
 ```
 Le workflow **Publier les applications** crée la version GitHub et y ajoute tous les installeurs (≈ 20 min). Les applications installées le signalent dans **ⓘ Infos → Mises à jour**.
 
-**Signatures facultatives** (secrets du dépôt, *Settings → Secrets → Actions*) :
+**Secrets du dépôt** (*Settings → Secrets and variables → Actions*) :
+- `TAURI_SIGNING_PRIVATE_KEY` (+ `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` si la clé a un mot de passe) : signe les mises à jour automatiques de l'application de bureau. La clé publique correspondante est dans `src-tauri/tauri.conf.json`. Générer une nouvelle paire : `npx tauri signer generate`.
+
+Les APK sont signés avec une clé de test stable (`android/app/debug.keystore`, publique) pour que les mises à jour s'installent par-dessus. Pour une distribution sur le Play Store, utilisez votre propre clé privée :
 - Android (Play Store) : `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` → APK signé + `.aab`
 - macOS : `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID` → app signée et notarisée
 - iOS App Store / TestFlight : nécessite un compte Apple Developer (99 $/an)

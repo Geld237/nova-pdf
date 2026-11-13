@@ -35,6 +35,10 @@ pub fn run() {
                 let _ = w.set_focus();
             }
         }));
+        // Mises à jour automatiques (installeur signé publié sur GitHub Releases)
+        builder = builder
+            .plugin(tauri_plugin_updater::Builder::new().build())
+            .plugin(tauri_plugin_process::init());
     }
 
     let app = builder

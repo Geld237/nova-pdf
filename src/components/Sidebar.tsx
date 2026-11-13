@@ -3,6 +3,7 @@ import type { PDFDocumentProxy } from '../pdf/engine';
 import type { Annotation, OutlineItem, PageText, SearchHit } from '../types';
 import { allMemories, forgetMemory, type DocMemory } from '../memory';
 import { Thumb } from './Thumb';
+import { Icon } from '../icons';
 
 type Tab = 'pages' | 'outline' | 'search' | 'annotations' | 'notebook';
 
@@ -19,6 +20,7 @@ interface Props {
   onDelete: (id: string) => void;
   tab: Tab;
   setTab: (t: Tab) => void;
+  onThumbMenu: (e: React.MouseEvent, page: number) => void;
 }
 
 const KIND_LABEL: Record<string, string> = {
@@ -32,15 +34,15 @@ export function Sidebar(p: Props) {
       <nav className="side-tabs" role="tablist">
         {(
           [
-            ['pages', '▦', 'Pages'],
-            ['outline', '☰', 'Sommaire'],
-            ['search', '⌕', 'Recherche'],
-            ['annotations', '✎', 'Annotations'],
-            ['notebook', '◫', 'Carnet'],
-          ] as [Tab, string, string][]
-        ).map(([id, icon, label]) => (
+            ['pages', 'Pages'],
+            ['outline', 'Sommaire'],
+            ['search', 'Recherche'],
+            ['annotations', 'Annotations'],
+            ['notebook', 'Carnet'],
+          ] as [Tab, string][]
+        ).map(([id, label]) => (
           <button key={id} role="tab" aria-selected={p.tab === id} className={p.tab === id ? 'active' : ''} onClick={() => p.setTab(id)} title={label}>
-            <span aria-hidden>{icon}</span>
+            <Icon name={id} size={19} />
             <small>{label}</small>
           </button>
         ))}
@@ -56,11 +58,11 @@ export function Sidebar(p: Props) {
   );
 }
 
-function Pages({ doc, numPages, current, goTo }: Props) {
+function Pages({ doc, numPages, current, goTo, onThumbMenu }: Props) {
   return (
     <div className="thumbs">
       {Array.from({ length: numPages }, (_, i) => (
-        <button key={i} className={`thumb ${i === current ? 'current' : ''}`} onClick={() => goTo(i)}>
+        <button key={i} className={`thumb ${i === current ? 'current' : ''}`} onClick={() => goTo(i)} onContextMenu={(e) => onThumbMenu(e, i)}>
           <Thumb doc={doc} page={i} width={110} />
           <span>{i + 1}</span>
         </button>
