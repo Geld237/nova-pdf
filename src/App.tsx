@@ -1,8 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { extractAllText, getOutline, openPdf, type PDFDocumentProxy } from './pdf/engine';
+import { extractAllText, getOutline, openPdfWithPassword, type PDFDocumentProxy } from './pdf/engine';
+import { unlockPdf } from './pdf/security';
 import { applyAnnotations } from './pdf/writer';
 import { download } from './pdf/tools';
-import { loadMemory, loadSetting, saveMemory, saveSetting } from './memory';
+import { DEFAULT_SETTINGS, appendNote, loadMemory, loadSetting, saveMemory, saveSetting, type AppSettings } from './memory';
+import { STAMP_PRESETS, makeStamp } from './stamps';
+import { applyAppUpdate, checkForAppUpdate, onUpdateState, updateState } from './update';
+import { NotesPanel } from './components/NotesPanel';
+import { SettingsPanel } from './components/SettingsPanel';
 import { DEFAULT_AI, type AiSettings } from './ai/llm';
 import { makeDemoPdf } from './demo';
 import type { Annotation, OutlineItem, PageText, ToolId } from './types';
@@ -32,9 +37,10 @@ interface DocState {
   dirty: boolean;
   handle?: FileSystemFileHandle;
   startPage: number;
+  encrypted: boolean;
 }
 
-type Panel = 'ai' | 'tools' | 'organize' | 'form' | 'reading' | null;
+type Panel = 'ai' | 'notes' | 'reading' | 'form' | 'organize' | 'tools' | 'settings' | null;
 type SideTab = 'pages' | 'outline' | 'search' | 'annotations' | 'notebook';
 
 const TOOLS: { id: ToolId; icon: string; label: string; key?: string }[] = [
@@ -49,6 +55,10 @@ const TOOLS: { id: ToolId; icon: string; label: string; key?: string }[] = [
   { id: 'text', icon: 'T', label: 'Texte', key: 't' },
   { id: 'note', icon: '🗨', label: 'Note', key: 'n' },
   { id: 'signature', icon: '✍', label: 'Signature' },
+  { id: 'stamp', icon: '⎔', label: 'Tampon' },
+  { id: 'whiteout', icon: '▯', label: 'Correcteur blanc (masquer pour réécrire)', key: 'w' },
+  { id: 'measure', icon: '📏', label: 'Mesurer', key: 'm' },
+  { id: 'field', icon: '⌸', label: 'Créer un champ de formulaire' },
   { id: 'redact', icon: '█', label: 'Caviarder (définitif)' },
   { id: 'eraser', icon: '⌫', label: 'Gomme (supprimer une annotation)', key: 'x' },
 ];
@@ -64,9 +74,25 @@ export default function App() {
   const [fit, setFit] = useState<'width' | 'page' | null>('width');
   const [layout, setLayout] = useState<'single' | 'double'>('single');
   const [night, setNight] = useState(false);
-  const [dark, setDark] = useState(() => loadSetting('ui', { dark: matchMedia?.('(prefers-color-scheme: dark)').matches }).dark);
+  const [settings, setSettingsState] = useState<AppSettings>(() => loadSetting('settings', DEFAULT_SETTINGS));
+  const setSettings = (v: AppSettings) => {
+    setSettingsState(v);
+    saveSetting('settings', v);
+  };
+  const [sysDark, setSysDark] = useState(() => !!matchMedia?.('(prefers-color-scheme: dark)').matches);
+  const dark = settings.theme === 'dark' || (settings.theme === 'system' && sysDark);
+  const [updateReady, setUpdateReady] = useState(false);
   const [tool, setTool] = useState<ToolId>('select');
-  const [opts, setOpts] = useState<ToolOptions>({ color: '#ffeb3b', strokeWidth: 2, opacity: 1, fontSize: 14 });
+  const [opts, setOpts] = useState<ToolOptions>(() => ({
+    color: loadSetting('settings', DEFAULT_SETTINGS).highlightColor,
+    strokeWidth: 2,
+    opacity: 1,
+    fontSize: 14,
+    fieldType: 'text',
+    measureRatio: 1,
+    measureUnit: 'cm',
+    stamp: null,
+  }));
   const [signature, setSignature] = useState<string | null>(null);
   const [sigModal, setSigModal] = useState(false);
   const [sidebar, setSidebar] = useState(true);
@@ -94,15 +120,48 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = dark ? 'dark' : 'light';
-    saveSetting('ui', { dark });
   }, [dark]);
+  useEffect(() => {
+    const mq = matchMedia?.('(prefers-color-scheme: dark)');
+    const h = () => setSysDark(mq.matches);
+    mq?.addEventListener('change', h);
+    return () => mq?.removeEventListener('change', h);
+  }, []);
+  // mises à jour de l'application
+  useEffect(() => {
+    const off = onUpdateState(() => setUpdateReady(updateState.needRefresh));
+    if (settings.autoCheckUpdates) setTimeout(() => checkForAppUpdate().catch(() => {}), 4000);
+    return () => {
+      off();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    setFit(settings.defaultFit === 'actual' ? null : settings.defaultFit);
+    if (settings.defaultFit === 'actual') setScale(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.defaultFit]);
 
   // ----- Ouverture -----------------------------------------------------------
   const loadInto = useCallback(
     async (bytes: Uint8Array, name: string, existingId?: string, handle?: FileSystemFileHandle) => {
       let pdf: PDFDocumentProxy;
+      let encrypted = false;
       try {
-        pdf = await openPdf(bytes, (retry) => prompt(retry ? 'Mot de passe incorrect. Réessayez :' : `« ${name} » est protégé. Mot de passe :`));
+        const r = await openPdfWithPassword(bytes, (retry) =>
+          prompt(retry ? 'Mot de passe incorrect. Réessayez :' : `« ${name} » est protégé. Mot de passe :`),
+        );
+        pdf = r.doc;
+        if (r.password !== undefined) {
+          // On garde une copie déchiffrée pour que tous les outils fonctionnent.
+          encrypted = true;
+          try {
+            bytes = await unlockPdf(bytes, r.password);
+            pdf = (await openPdfWithPassword(bytes, () => r.password!)).doc;
+          } catch {
+            notify('Document ouvert en lecture ; certains outils peuvent échouer sur ce chiffrement.');
+          }
+        }
       } catch (e) {
         notify(`Impossible d'ouvrir « ${name} » : ${(e as Error).message}`);
         return;
@@ -126,16 +185,17 @@ export default function App() {
       const id = uid();
       const state: DocState = {
         id, name, bytes, pdf, version: 0, sizes, outline, texts: null, fingerprint,
-        annotations: mem?.annotations ?? [], undo: [], redo: [], dirty: false, handle,
-        startPage: mem?.lastPage ?? 0,
+        annotations: settings.rememberAnnotations ? mem?.annotations ?? [] : [], undo: [], redo: [], dirty: false, handle,
+        startPage: settings.resumeLastPage ? mem?.lastPage ?? 0 : 0, encrypted,
       };
       setDocs((ds) => [...ds, state]);
       setActiveId(id);
       setPage(state.startPage);
-      if (mem?.annotations.length) notify(`${mem.annotations.length} annotation(s) retrouvée(s) pour ce document.`);
+      if (settings.rememberAnnotations && mem?.annotations.length) notify(`${mem.annotations.length} annotation(s) retrouvée(s) pour ce document.`);
       extractAllText(pdf).then((texts) => patchDoc(id, { texts }));
     },
-    [notify, patchDoc],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [notify, patchDoc, settings.rememberAnnotations, settings.resumeLastPage],
   );
 
   const openFiles = useCallback(
@@ -233,7 +293,7 @@ export default function App() {
     patchDoc(doc.id, (d) => ({ annotations: d.redo[d.redo.length - 1], redo: d.redo.slice(0, -1), undo: [...d.undo, d.annotations] }));
 
   useEffect(() => {
-    if (!doc) return;
+    if (!doc || !settings.rememberAnnotations) return;
     const t = setTimeout(
       () => saveMemory({ fingerprint: doc.fingerprint, name: doc.name, annotations: doc.annotations, lastPage: page, updatedAt: Date.now() }),
       600,
@@ -299,7 +359,7 @@ export default function App() {
 
   const closeDoc = (id: string) => {
     const d = docs.find((x) => x.id === id);
-    if (d?.dirty && !confirm(`« ${d.name} » a des modifications non enregistrées (les annotations restent mémorisées). Fermer ?`)) return;
+    if (d?.dirty && settings.confirmClose && !confirm(`« ${d.name} » a des modifications non enregistrées (les annotations restent mémorisées). Fermer ?`)) return;
     d?.pdf.cleanup().catch(() => {});
     const rest = docs.filter((x) => x.id !== id);
     setDocs(rest);
@@ -322,6 +382,8 @@ export default function App() {
         },
         openNew: (bytes, name) => loadInto(bytes, name),
         notify,
+        outline: doc.outline,
+        ocrLang: settings.ocrLang,
       }
     : null;
 
@@ -360,11 +422,12 @@ export default function App() {
       setSigModal(true);
       return;
     }
+    if (t === 'stamp' && !opts.stamp) setOpts({ ...opts, stamp: makeStamp(STAMP_PRESETS[0].label, STAMP_PRESETS[0].color) });
     setTool(t);
     if (t === 'highlight' && ['#e53935', '#3949ab', '#212121'].includes(opts.color)) setOpts({ ...opts, color: '#ffeb3b' });
   };
 
-  const showColor = !['select', 'eraser', 'signature', 'redact'].includes(tool);
+  const showColor = !['select', 'eraser', 'signature', 'redact', 'whiteout', 'stamp', 'field'].includes(tool);
 
   return (
     <div
@@ -426,12 +489,63 @@ export default function App() {
                 {tool === 'text' && (
                   <input type="number" min={6} max={72} value={opts.fontSize} onChange={(e) => setOpts({ ...opts, fontSize: +e.target.value })} title="Taille du texte" />
                 )}
+                {tool === 'measure' && (
+                  <>
+                    <label className="inline" title="Échelle du plan (1:N)">
+                      1:
+                      <input type="number" min={1} value={opts.measureRatio} onChange={(e) => setOpts({ ...opts, measureRatio: Math.max(1, +e.target.value) })} />
+                    </label>
+                    <select value={opts.measureUnit} onChange={(e) => setOpts({ ...opts, measureUnit: e.target.value as ToolOptions['measureUnit'] })}>
+                      <option value="mm">mm</option>
+                      <option value="cm">cm</option>
+                      <option value="m">m</option>
+                      <option value="in">po</option>
+                    </select>
+                  </>
+                )}
+              </div>
+            )}
+            {tool === 'stamp' && (
+              <div className="tool-opts">
+                <select
+                  onChange={(e) => {
+                    const pr = STAMP_PRESETS[+e.target.value];
+                    setOpts({ ...opts, stamp: makeStamp(pr.label, pr.color) });
+                  }}
+                  title="Tampon"
+                >
+                  {STAMP_PRESETS.map((p, i) => (
+                    <option key={p.label} value={i}>{p.label}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => {
+                    const t = prompt('Texte du tampon personnalisé :');
+                    if (t) setOpts({ ...opts, stamp: makeStamp(t.toUpperCase(), opts.color === '#ffeb3b' ? '#3d52d5' : opts.color) });
+                  }}
+                >
+                  Personnalisé…
+                </button>
+                {opts.stamp && <img src={opts.stamp} alt="" className="stamp-preview" />}
+              </div>
+            )}
+            {tool === 'field' && (
+              <div className="tool-opts">
+                <select value={opts.fieldType} onChange={(e) => setOpts({ ...opts, fieldType: e.target.value as 'text' | 'checkbox' })}>
+                  <option value="text">Champ texte</option>
+                  <option value="checkbox">Case à cocher</option>
+                </select>
               </div>
             )}
           </>
         )}
         <span className="spacer" />
-        <button className="icon" onClick={() => setDark(!dark)} title="Thème clair / sombre">
+        {updateReady && (
+          <button className="primary" onClick={applyAppUpdate} title="Une nouvelle version est prête">
+            ↻ Mettre à jour
+          </button>
+        )}
+        <button className="icon" onClick={() => setSettings({ ...settings, theme: dark ? 'light' : 'dark' })} title="Thème clair / sombre">
           {dark ? '☀' : '☾'}
         </button>
       </header>
@@ -507,20 +621,6 @@ export default function App() {
                 </select>
                 <button className={`icon ${night ? 'active' : ''}`} onClick={() => setNight(!night)} title="Mode nuit (inverse les couleurs des pages)">◐</button>
                 <button className="icon" onClick={() => setFocus(!focus)} title="Mode concentration (F)">⛶</button>
-                <span className="spacer" />
-                {(
-                  [
-                    ['ai', '✦ IA'],
-                    ['reading', 'Lecture'],
-                    ['form', 'Formulaire'],
-                    ['organize', 'Pages'],
-                    ['tools', 'Outils'],
-                  ] as [Panel, string][]
-                ).map(([id, label]) => (
-                  <button key={id} className={panel === id ? 'active' : ''} onClick={() => setPanel(panel === id ? null : id)}>
-                    {label}
-                  </button>
-                ))}
               </div>
               <Viewer
                 ref={viewer}
@@ -548,15 +648,65 @@ export default function App() {
           )}
         </section>
 
-        {doc && ctx && panel && (
+        {panel && (panel === 'settings' || (doc && ctx)) && (
           <aside className="right">
-            {panel === 'ai' && <AIPanel texts={doc.texts} currentPage={page} annotations={doc.annotations} settings={ai} setSettings={setAi} goTo={goTo} />}
-            {panel === 'tools' && <ToolsPanel ctx={ctx} />}
-            {panel === 'organize' && <OrganizePanel ctx={ctx} />}
-            {panel === 'form' && <FormPanel ctx={ctx} />}
-            {panel === 'reading' && <ReadingPanel texts={doc.texts} currentPage={page} goTo={goTo} />}
+            {panel === 'settings' && (
+              <SettingsPanel
+                doc={doc ? { name: doc.name, size: doc.bytes.length, pdf: doc.pdf, currentPage: page, pageSize: doc.sizes[page], encrypted: doc.encrypted } : null}
+                settings={settings}
+                setSettings={setSettings}
+                notify={notify}
+              />
+            )}
+            {doc && panel === 'notes' && (
+              <NotesPanel fingerprint={doc.fingerprint} docName={doc.name} currentPage={page} annotations={doc.annotations} goTo={goTo} />
+            )}
+            {doc && panel === 'ai' && (
+              <AIPanel
+                texts={doc.texts}
+                currentPage={page}
+                annotations={doc.annotations}
+                settings={ai}
+                setSettings={setAi}
+                goTo={goTo}
+                onToNotes={async (text) => {
+                  await appendNote(doc.fingerprint, doc.name, `### ✦ Assistant IA — p. ${page + 1}\n${text}`);
+                  notify('Ajouté à vos notes.');
+                }}
+              />
+            )}
+            {ctx && panel === 'tools' && <ToolsPanel ctx={ctx} />}
+            {ctx && panel === 'organize' && <OrganizePanel ctx={ctx} />}
+            {ctx && panel === 'form' && <FormPanel ctx={ctx} />}
+            {doc && panel === 'reading' && <ReadingPanel texts={doc.texts} currentPage={page} goTo={goTo} />}
           </aside>
         )}
+
+        <nav className="rail" aria-label="Panneaux">
+          {(
+            [
+              ['ai', '✦', 'IA', true],
+              ['notes', '✎', 'Notes', true],
+              ['reading', '📖', 'Lecture', true],
+              ['form', '☑', 'Formulaire', true],
+              ['organize', '▦', 'Pages', true],
+              ['tools', '⚒', 'Outils', true],
+              ['settings', 'ⓘ', 'Infos', false],
+            ] as [Panel, string, string, boolean][]
+          ).map(([id, icon, label, needsDoc]) => (
+            <button
+              key={id}
+              className={panel === id ? 'active' : ''}
+              disabled={needsDoc && !doc}
+              onClick={() => setPanel(panel === id ? null : id)}
+              title={id === 'settings' ? 'Infos, paramètres et mises à jour' : label}
+            >
+              <span aria-hidden>{icon}</span>
+              <small>{label}</small>
+              {id === 'settings' && updateReady && <i className="dot" />}
+            </button>
+          ))}
+        </nav>
       </main>
 
       {sigModal && (

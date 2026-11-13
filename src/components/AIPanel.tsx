@@ -16,6 +16,7 @@ interface Props {
   settings: AiSettings;
   setSettings: (s: AiSettings) => void;
   goTo: (p: number) => void;
+  onToNotes: (text: string) => void;
 }
 
 const SYSTEM =
@@ -282,6 +283,12 @@ export function AIPanel(p: Props) {
         {msgs.map((m, i) => (
           <div key={i} className={`msg ${m.role}`}>
             <Cited text={m.content || '…'} goTo={p.goTo} />
+            {m.role === 'assistant' && m.content && !(busy && i === msgs.length - 1) && (
+              <div className="msg-actions">
+                <button className="link" onClick={() => p.onToNotes(m.content)}>→ Ajouter aux notes</button>
+                <button className="link" onClick={() => navigator.clipboard?.writeText(m.content)}>Copier</button>
+              </div>
+            )}
           </div>
         ))}
       </div>

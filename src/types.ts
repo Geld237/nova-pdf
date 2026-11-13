@@ -12,6 +12,10 @@ export type ToolId =
   | 'note'
   | 'signature'
   | 'redact'
+  | 'whiteout'
+  | 'measure'
+  | 'field'
+  | 'stamp'
   | 'eraser';
 
 export type AnnKind =
@@ -25,7 +29,10 @@ export type AnnKind =
   | 'text'
   | 'note'
   | 'image'
-  | 'redact';
+  | 'redact'
+  | 'whiteout'
+  | 'measure'
+  | 'field';
 
 export interface Rect {
   x: number;
@@ -50,7 +57,9 @@ export interface Annotation {
   points?: [number, number][]; // ink / arrow
   text?: string; // texte saisi ou texte surligné
   fontSize?: number;
-  dataUrl?: string; // image (signature)
+  dataUrl?: string; // image (signature, tampon)
+  fieldType?: 'text' | 'checkbox'; // champ de formulaire à créer
+  fieldName?: string;
   createdAt: number;
 }
 

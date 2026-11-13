@@ -5,17 +5,22 @@ Nova PDF couvre aujourd'hui l'essentiel de ce que font les lecteurs du marché. 
 ## v0.1 — disponible ✅
 Lecture, recherche, annotations, formulaires, signature, organisation des pages, fusion/découpe, filigrane, numérotation, OCR local, caviardage réel, export, comparaison de versions, mode lecture, lecture à voix haute, carnet multi-documents, IA locale (résumé, Q&R citées, explication, traduction, fiches).
 
-## v0.2 — compléter les fondamentaux
-- [ ] Chiffrement AES et permissions (mot de passe à l'enregistrement)
+## v0.2 — disponible ✅
+Panneau de notes, panneau Infos & paramètres avec mises à jour, chiffrement AES-256 et déverrouillage, tampons, mesure, correcteur blanc, création de champs de formulaire, compression forte, réparation, recadrage, pages par feuille, format de page, signets, pièces jointes, préférences d'affichage, aplatissement, export Word/HTML, extraction d'images, PDF vierge et texte → PDF, scan caméra, sauvegarde/restauration des données.
+
+## v0.3 — compléter les fondamentaux
 - [ ] Déplacer / redimensionner / modifier une annotation existante
 - [ ] Annotations natives éditables (Highlight, Ink, Square…) en plus de l'aplatissement
 - [ ] Import / export XFDF des commentaires
 - [ ] Recherche avancée : expressions régulières, tous les onglets ouverts
 - [ ] Édition du texte existant du PDF
-- [ ] Tampons personnalisés, mesure de distances et surfaces (plans)
+- [ ] Mesure de surfaces et de périmètres
+- [ ] Conversion Office → PDF locale (LibreOffice WebAssembly)
+- [ ] Linéarisation (affichage web rapide), extraction des images non JPEG
+- [ ] Actions en lot (appliquer une suite d'outils à plusieurs fichiers)
 - [ ] Internationalisation (anglais, espagnol…)
 
-## v0.3 — lecture augmentée
+## v0.4 — lecture augmentée
 - [ ] **Recherche sémantique** avec embeddings locaux (transformers.js) en plus de BM25
 - [ ] **Vision locale** : expliquer un graphique, un tableau ou une formule (modèle multimodal WebGPU)
 - [ ] Reflow intelligent des PDF à colonnes, tableaux et formules (mobile)
@@ -24,11 +29,12 @@ Lecture, recherche, annotations, formulaires, signature, organisation des pages,
 - [ ] Répétition espacée des fiches de révision générées
 - [ ] Graphe de connaissances reliant les annotations de tous les documents
 
-## v0.4 — accessibilité et conformité
+## v0.5 — accessibilité et conformité
 - [ ] Vérification et balisage PDF/UA assisté par IA (European Accessibility Act)
 - [ ] Génération de textes alternatifs pour les images
 - [ ] Export PDF/A pour l'archivage
-- [ ] Signature électronique certifiée (PAdES) et vérification des signatures
+- [ ] Signature électronique certifiée (PAdES), vérification des signatures, prépresse (PDF/X)
+- [ ] Demande de signatures à des tiers sans serveur (lien P2P chiffré)
 
 ## v1.0 — partout
 - [ ] Application desktop **Tauri** (Windows, macOS, Linux), avec accès natif aux dossiers

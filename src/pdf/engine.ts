@@ -13,14 +13,27 @@ export async function openPdf(
   bytes: Uint8Array,
   askPassword: (retry: boolean) => string | null,
 ): Promise<PDFDocumentProxy> {
+  return (await openPdfWithPassword(bytes, askPassword)).doc;
+}
+
+/** Comme openPdf, mais renvoie aussi le mot de passe saisi (pour déchiffrer ensuite). */
+export async function openPdfWithPassword(
+  bytes: Uint8Array,
+  askPassword: (retry: boolean) => string | null,
+): Promise<{ doc: PDFDocumentProxy; password?: string }> {
+  let password: string | undefined;
   // pdf.js transfère le buffer au worker : on lui passe une copie.
   const task = pdfjs.getDocument({ data: bytes.slice() });
   task.onPassword = (update: (pw: string) => void, reason: number) => {
     const pw = askPassword(reason === pdfjs.PasswordResponses.INCORRECT_PASSWORD);
     if (pw === null) task.destroy();
-    else update(pw);
+    else {
+      password = pw;
+      update(pw);
+    }
   };
-  return task.promise;
+  const doc = await task.promise;
+  return { doc, password };
 }
 
 /** Texte de chaque page, avec retours à la ligne. */

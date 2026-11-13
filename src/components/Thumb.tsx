@@ -29,8 +29,9 @@ export function Thumb({
     let task: { cancel: () => void; promise: Promise<unknown> } | null = null;
     let dead = false;
     (async () => {
-      const pg = await doc.getPage(page + 1);
-      if (dead) return;
+      if (page >= doc.numPages) return;
+      const pg = await doc.getPage(page + 1).catch(() => null);
+      if (dead || !pg) return;
       const base = pg.getViewport({ scale: 1 });
       const vp = pg.getViewport({ scale: width / base.width });
       const c = ref.current!;

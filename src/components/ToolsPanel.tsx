@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { canvasToBlob, extractAllText, openPdf, renderPageToCanvas, type PDFDocumentProxy } from '../pdf/engine';
 import {
-  addPageNumbers, addWatermark, baseName, diffLines, download, extractPages, imagesToPdf, mergePdfs,
-  optimize, parseRanges, readMeta, splitPdf, stripMeta, writeMeta, type Meta,
+  addPageNumbers, addWatermark, baseName, diffLines, download, extractPages, mergePdfs,
+  parseRanges, readMeta, splitPdf, stripMeta, writeMeta, type Meta,
 } from '../pdf/tools';
 import { makeSearchable, ocrPages } from '../pdf/ocr';
-import type { PageText } from '../types';
+import type { OutlineItem, PageText } from '../types';
+import { MoreTools } from './MoreTools';
 
 export interface DocCtx {
   name: string;
@@ -19,6 +20,8 @@ export interface DocCtx {
   replace: (bytes: Uint8Array, label: string) => Promise<void>;
   openNew: (bytes: Uint8Array, name: string) => void;
   notify: (msg: string) => void;
+  outline: OutlineItem[];
+  ocrLang: string;
 }
 
 const pickFiles = (accept: string, multiple = true) =>
@@ -49,7 +52,7 @@ export function ToolsPanel({ ctx }: { ctx: DocCtx }) {
   const [wm, setWm] = useState({ text: 'CONFIDENTIEL', color: '#d32f2f', opacity: 0.18, size: 64 });
   const [num, setNum] = useState({ format: '{n} / {total}', position: 'bottom-center' as const, size: 10, start: 1 });
   const [meta, setMeta] = useState<Meta | null>(null);
-  const [ocrLang, setOcrLang] = useState('fra+eng');
+  const [ocrLang, setOcrLang] = useState(ctx.ocrLang);
   const [ocrScope, setOcrScope] = useState<'current' | 'all'>('current');
   const [ocrProgress, setOcrProgress] = useState<{ msg: string; r: number } | null>(null);
   const [ocrText, setOcrText] = useState('');
@@ -260,18 +263,6 @@ export function ToolsPanel({ ctx }: { ctx: DocCtx }) {
       </details>
 
       <details>
-        <summary>Créer un PDF à partir d'images</summary>
-        <button
-          onClick={wrap('Conversion', async () => {
-            const files = await pickFiles('image/png,image/jpeg');
-            if (files.length) ctx.openNew(await imagesToPdf(files), 'images.pdf');
-          })}
-        >
-          Choisir des images…
-        </button>
-      </details>
-
-      <details>
         <summary>Propriétés et confidentialité</summary>
         {meta && (
           <>
@@ -296,13 +287,6 @@ export function ToolsPanel({ ctx }: { ctx: DocCtx }) {
             </div>
           </>
         )}
-        <button onClick={wrap('Optimisation', async () => {
-          const before = (await ctx.getBytes()).length;
-          const out = await optimize(await ctx.getBytes());
-          await ctx.replace(out, `Optimisé : ${(before / 1024).toFixed(0)} → ${(out.length / 1024).toFixed(0)} Ko`);
-        })}>
-          Optimiser la taille
-        </button>
       </details>
 
       <details>
@@ -337,6 +321,8 @@ export function ToolsPanel({ ctx }: { ctx: DocCtx }) {
           </>
         )}
       </details>
+
+      <MoreTools ctx={ctx} outline={ctx.outline} run={wrap} />
     </div>
   );
 }

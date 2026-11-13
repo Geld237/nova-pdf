@@ -195,6 +195,36 @@ export async function applyAnnotations(
           else page.node.set(PDFName.of('Annots'), pdf.context.obj([ref]));
           break;
         }
+        case 'whiteout': {
+          const b = box(a.rect!);
+          page.drawRectangle({ x: b.x, y: b.y, width: b.w, height: b.h, color: rgb(1, 1, 1) });
+          break;
+        }
+        case 'measure': {
+          const [p0, p1] = a.points ?? [];
+          if (!p0 || !p1) break;
+          const [x1, y1] = conv(...p0);
+          const [x2, y2] = conv(...p1);
+          page.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y2 }, thickness: a.strokeWidth, color });
+          const ang = Math.atan2(y2 - y1, x2 - x1);
+          const nx = Math.sin(ang) * 5;
+          const ny = -Math.cos(ang) * 5;
+          for (const [x, y] of [[x1, y1], [x2, y2]])
+            page.drawLine({ start: { x: x - nx, y: y - ny }, end: { x: x + nx, y: y + ny }, thickness: a.strokeWidth, color });
+          const label = sanitize(font, a.text ?? '');
+          const w = font.widthOfTextAtSize(label, 9);
+          page.drawText(label, { x: (x1 + x2) / 2 - w / 2, y: (y1 + y2) / 2 + 4, size: 9, font, color });
+          break;
+        }
+        case 'field': {
+          const b = box(a.rect!);
+          const form = pdf.getForm();
+          let name = a.fieldName || `Champ_${a.id}`;
+          while (form.getFieldMaybe(name)) name += '_';
+          if (a.fieldType === 'checkbox') form.createCheckBox(name).addToPage(page, { x: b.x, y: b.y, width: b.w, height: b.h });
+          else form.createTextField(name).addToPage(page, { x: b.x, y: b.y, width: b.w, height: b.h });
+          break;
+        }
         case 'redact':
           break; // déjà traité
       }

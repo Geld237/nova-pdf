@@ -1,7 +1,7 @@
 {
   "name": "nova-pdf",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,7 +11,9 @@
     "typecheck": "tsc -b"
   },
   "dependencies": {
+    "@cantoo/pdf-lib": "^2.11.1",
     "@mlc-ai/web-llm": "^0.2.88",
+    "docx": "^9.15.3",
     "idb-keyval": "^6.3.0",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^6.5.438",

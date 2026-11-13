@@ -7,6 +7,17 @@ export interface ToolOptions {
   strokeWidth: number;
   opacity: number;
   fontSize: number;
+  fieldType: 'text' | 'checkbox';
+  measureRatio: number; // échelle 1:N (1 = taille réelle)
+  measureUnit: 'mm' | 'cm' | 'm' | 'in';
+  stamp: string | null; // image du tampon
+}
+
+/** Longueur réelle d'un segment (points PDF) selon l'échelle choisie. */
+export function measureLabel(pts: number, ratio: number, unit: ToolOptions['measureUnit']) {
+  const mm = (pts / 72) * 25.4 * ratio;
+  const v = unit === 'mm' ? mm : unit === 'cm' ? mm / 10 : unit === 'm' ? mm / 1000 : mm / 25.4;
+  return `${v.toLocaleString('fr-FR', { maximumFractionDigits: v < 10 ? 2 : 1 })} ${unit}`;
 }
 
 interface LinkBox {
@@ -33,7 +44,7 @@ interface Props {
 }
 
 const uid = () => Math.random().toString(36).slice(2, 10);
-const DRAW_TOOLS: ToolId[] = ['ink', 'rect', 'ellipse', 'arrow', 'text', 'note', 'signature', 'redact', 'eraser'];
+const DRAW_TOOLS: ToolId[] = ['ink', 'rect', 'ellipse', 'arrow', 'text', 'note', 'signature', 'stamp', 'redact', 'whiteout', 'measure', 'field', 'eraser'];
 const SELECTION_TOOLS: ToolId[] = ['highlight', 'underline', 'strike'];
 
 function PageViewImpl(p: Props) {
@@ -54,8 +65,8 @@ function PageViewImpl(p: Props) {
     let renderTask: { cancel: () => void; promise: Promise<unknown> } | null = null;
     let textLayer: InstanceType<typeof pdfjs.TextLayer> | null = null;
     (async () => {
-      const page = await p.doc.getPage(p.pageIndex + 1);
-      if (cancelled) return;
+      const page = await p.doc.getPage(p.pageIndex + 1).catch(() => null);
+      if (cancelled || !page) return;
       const vp = page.getViewport({ scale: p.scale });
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const canvas = canvasRef.current!;
@@ -167,22 +178,27 @@ function PageViewImpl(p: Props) {
       e.preventDefault();
       return;
     }
-    if (p.tool === 'signature') {
-      if (!p.signature) return;
+    if (p.tool === 'signature' || p.tool === 'stamp') {
+      const src = p.tool === 'signature' ? p.signature : p.opts.stamp;
+      if (!src) return;
       const img = new Image();
       img.onload = () => {
-        const w = 160;
+        const w = p.tool === 'signature' ? 160 : 170;
         const h = (img.height / img.width) * w;
-        p.onAdd({ ...base(), kind: 'image', opacity: 1, rect: { x: x - w / 2, y: y - h / 2, w, h }, dataUrl: p.signature! });
+        p.onAdd({ ...base(), kind: 'image', opacity: p.tool === 'stamp' ? 0.9 : 1, rect: { x: x - w / 2, y: y - h / 2, w, h }, dataUrl: src });
       };
-      img.src = p.signature;
+      img.src = src;
       return;
     }
     (e.target as Element).setPointerCapture?.(e.pointerId);
     const b = base();
     if (p.tool === 'ink') setDraft({ ...b, kind: 'ink', points: [[x, y]] });
     else if (p.tool === 'arrow') setDraft({ ...b, kind: 'arrow', points: [[x, y], [x, y]] });
+    else if (p.tool === 'measure') setDraft({ ...b, kind: 'measure', strokeWidth: 1.2, color: ['#ffeb3b', '#8bc34a', '#4fc3f7', '#f48fb1'].includes(b.color) ? '#d32f2f' : b.color, points: [[x, y], [x, y]] });
     else if (p.tool === 'redact') setDraft({ ...b, kind: 'redact', color: '#000000', opacity: 1, rect: { x, y, w: 0, h: 0 } });
+    else if (p.tool === 'whiteout') setDraft({ ...b, kind: 'whiteout', color: '#ffffff', opacity: 1, rect: { x, y, w: 0, h: 0 } });
+    else if (p.tool === 'field')
+      setDraft({ ...b, kind: 'field', color: '#3d52d5', opacity: 1, fieldType: p.opts.fieldType, rect: { x, y, w: 0, h: 0 } });
     else setDraft({ ...b, kind: p.tool as 'rect' | 'ellipse', rect: { x, y, w: 0, h: 0 } });
   };
 
@@ -191,6 +207,10 @@ function PageViewImpl(p: Props) {
     const [x, y] = toPage(e);
     if (draft.kind === 'ink') setDraft({ ...draft, points: [...draft.points!, [x, y]] });
     else if (draft.kind === 'arrow') setDraft({ ...draft, points: [draft.points![0], [x, y]] });
+    else if (draft.kind === 'measure') {
+      const pts: [number, number][] = [draft.points![0], [x, y]];
+      setDraft({ ...draft, points: pts, text: measureLabel(dist(pts[0], pts[1]), p.opts.measureRatio, p.opts.measureUnit) });
+    }
     else {
       const sx = (draft as Annotation & { _sx?: number })._sx ?? draft.rect!.x;
       const sy = (draft as Annotation & { _sy?: number })._sy ?? draft.rect!.y;
@@ -211,8 +231,12 @@ function PageViewImpl(p: Props) {
     const big =
       (d.rect && d.rect.w > 3 && d.rect.h > 3) ||
       (d.kind === 'ink' && (d.points?.length ?? 0) > 1) ||
-      (d.kind === 'arrow' && dist(d.points![0], d.points![1]) > 5);
-    if (big) p.onAdd(d);
+      ((d.kind === 'arrow' || d.kind === 'measure') && dist(d.points![0], d.points![1]) > 5);
+    if (d.kind === 'field') {
+      if (d.fieldType === 'checkbox' && d.rect) d.rect = { ...d.rect, w: Math.max(d.rect.w, 12), h: Math.max(d.rect.w, 12) };
+      d.fieldName = `${d.fieldType === 'checkbox' ? 'Case' : 'Champ'}_${p.pageIndex + 1}_${Math.random().toString(36).slice(2, 6)}`;
+    }
+    if (big || (d.kind === 'field' && d.fieldType === 'checkbox')) p.onAdd(d);
     setDraft(null);
   };
 
@@ -415,6 +439,33 @@ function AnnShape({ a, eraser, onDelete }: { a: Annotation; eraser: boolean; onD
       );
     case 'image':
       return <image {...common} href={a.dataUrl} x={a.rect!.x} y={a.rect!.y} width={a.rect!.w} height={a.rect!.h} />;
+    case 'whiteout':
+      return <rect {...common} x={a.rect!.x} y={a.rect!.y} width={a.rect!.w} height={a.rect!.h} fill="#fff" stroke="#0002" strokeDasharray="2 2" />;
+    case 'measure': {
+      const [[x1, y1], [x2, y2]] = a.points as [number, number][];
+      const ang = Math.atan2(y2 - y1, x2 - x1);
+      const nx = Math.sin(ang) * 5;
+      const ny = -Math.cos(ang) * 5;
+      return (
+        <g {...common} stroke={a.color} strokeWidth={a.strokeWidth}>
+          <line x1={x1} y1={y1} x2={x2} y2={y2} />
+          <line x1={x1 - nx} y1={y1 - ny} x2={x1 + nx} y2={y1 + ny} />
+          <line x1={x2 - nx} y1={y2 - ny} x2={x2 + nx} y2={y2 + ny} />
+          <text x={(x1 + x2) / 2} y={(y1 + y2) / 2 - 4} fill={a.color} stroke="#fff" strokeWidth={3} paintOrder="stroke" fontSize={10} textAnchor="middle" fontFamily="Helvetica, Arial">
+            {a.text}
+          </text>
+        </g>
+      );
+    }
+    case 'field':
+      return (
+        <g {...common}>
+          <rect x={a.rect!.x} y={a.rect!.y} width={a.rect!.w} height={a.rect!.h} fill="rgb(61 82 213 / 0.12)" stroke="#3d52d5" strokeDasharray="3 2" />
+          <text x={a.rect!.x + 2} y={a.rect!.y - 2} fontSize={7} fill="#3d52d5" fontFamily="Helvetica, Arial">
+            {a.fieldType === 'checkbox' ? '☐ ' : ''}{a.fieldName}
+          </text>
+        </g>
+      );
     case 'redact':
       return (
         <g {...common}>
