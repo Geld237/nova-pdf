@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { aiDiagnostics, chat, customCpuModelName, gpuMarkedBroken, listOllamaModels, resetGpuFlag, setCustomCpuModel, CPU_MODELS, WEBLLM_MODELS, webGpuAvailable, type AiSettings, type ChatMessage } from '../ai/llm';
+import { aiDiagnostics, chat, lastEngine, customCpuModelName, gpuMarkedBroken, listOllamaModels, resetGpuFlag, setCustomCpuModel, CPU_MODELS, WEBLLM_MODELS, webGpuAvailable, type AiSettings, type ChatMessage } from '../ai/llm';
 import { Bm25Index, chunkPages, type Chunk } from '../ai/retrieval';
 import { saveSetting } from '../memory';
 import type { Annotation, PageText } from '../types';
@@ -46,11 +46,16 @@ export function AIPanel(p: Props) {
   const [showSettings, setShowSettings] = useState(false);
   const [lang, setLang] = useState('anglais');
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
-  const [diag, setDiag] = useState<{ webgpu: boolean; f16: boolean; ollama: boolean } | null>(null);
+  const [diag, setDiag] = useState<Awaited<ReturnType<typeof aiDiagnostics>> | null>(null);
   useEffect(() => {
     if (showSettings) aiDiagnostics(p.settings.ollamaUrl).then(setDiag);
   }, [showSettings, p.settings.ollamaUrl]);
   const abort = useRef<AbortController | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [msgs]);
   const [scope, setScope] = useState<Scope>('doc');
   const [docs, setDocs] = useState<CorpusDoc[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -282,8 +287,8 @@ export function AIPanel(p: Props) {
     ], true);
   };
 
-  const ask = async () => {
-    const q = input.trim();
+  const ask = async (override?: string) => {
+    const q = (override ?? input).trim();
     if (scope !== 'doc') {
       if (!q) return;
       setInput('');
@@ -315,6 +320,7 @@ export function AIPanel(p: Props) {
           ⚙
         </button>
       </header>
+      <div className="ai-scroll" ref={scrollRef}>
       <p className="privacy">🔒 Tout reste sur votre appareil : aucun texte n'est envoyé sur Internet.</p>
 
       <div className="seg">
@@ -353,8 +359,23 @@ export function AIPanel(p: Props) {
             <ul className="diag">
               <li className={diag.webgpu ? 'ok' : 'ko'}>{diag.webgpu ? '✓' : '✗'} Carte graphique accessible (WebGPU)</li>
               {diag.webgpu && <li className="ok">{diag.f16 ? '✓ Calcul 16 bits disponible' : '✓ Mode 32 bits utilisé automatiquement'}</li>}
-              <li className={diag.ollama ? 'ok' : 'muted'}>{diag.ollama ? '✓ Ollama détecté sur cet ordinateur' : '– Ollama non détecté'}</li>
+              <li className={diag.ollama ? 'ok' : diag.ollamaBlocked ? 'ko' : 'muted'}>
+                {diag.ollama
+                  ? `✓ Ollama détecté (${diag.ollamaModels.length ? diag.ollamaModels.join(', ') : 'aucun modèle installé'})`
+                  : diag.ollamaBlocked
+                    ? '✗ Ollama est lancé mais refuse l’accès depuis cette page'
+                    : '– Ollama non détecté'}
+              </li>
             </ul>
+          )}
+          {diag?.ollama && !diag.ollamaModels.length && (
+            <p className="warn">Ollama n'a aucun modèle : ouvrez un terminal et tapez « ollama pull qwen2.5:3b ».</p>
+          )}
+          {diag?.ollamaBlocked && (
+            <p className="warn">
+              Pour autoriser Nova PDF (version web) : fermez Ollama, puis dans un terminal tapez <code>setx OLLAMA_ORIGINS "*"</code> (Windows) ou{' '}
+              <code>launchctl setenv OLLAMA_ORIGINS "*"</code> (Mac), et relancez Ollama. L'application de bureau n'a pas besoin de ce réglage.
+            </p>
           )}
           {diag && !diag.webgpu && !diag.ollama && (
             <p className="warn">
@@ -502,34 +523,55 @@ export function AIPanel(p: Props) {
         ))}
       </div>
 
+      </div>
+
       <form
-        className="ask"
+        className="composer"
         onSubmit={(e) => {
           e.preventDefault();
           ask();
         }}
       >
-        <textarea
-          rows={2}
-          placeholder={scope !== 'doc' ? 'Votre question sur ces documents…' : p.texts ? 'Votre question sur le document…' : 'Indexation…'}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              ask();
-            }
-          }}
-        />
-        {busy ? (
-          <button type="button" onClick={() => abort.current?.abort()}>
-            Stop
-          </button>
-        ) : (
-          <button type="submit" disabled={!input.trim() || (scope === 'doc' ? !p.texts : !active.length)}>
-            Envoyer
-          </button>
+        {msgs.length === 0 && (
+          <div className="chips">
+            {(scope === 'doc'
+              ? ['Résume ce document en 5 points', 'Quelles sont les idées principales ?', `Explique la page ${p.currentPage + 1}`]
+              : ['Quels points communs entre ces documents ?', 'Quelles différences importantes ?']
+            ).map((q) => (
+              <button key={q} type="button" className="chip" disabled={busy || !p.texts} onClick={() => ask(q)}>{q}</button>
+            ))}
+          </div>
         )}
+        <div className="composer-box">
+          <textarea
+            rows={1}
+            placeholder={scope !== 'doc' ? 'Posez une question sur ces documents…' : p.texts ? 'Posez une question sur ce document…' : 'Lecture du document…'}
+            value={input}
+            onChange={(e) => {
+              setInput(e.target.value);
+              e.target.style.height = 'auto';
+              e.target.style.height = `${Math.min(140, e.target.scrollHeight)}px`;
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                ask();
+              }
+            }}
+          />
+          {busy ? (
+            <button type="button" className="send stop" onClick={() => abort.current?.abort()} title="Arrêter">
+              <span className="stop-square" />
+            </button>
+          ) : (
+            <button type="submit" className="send" disabled={!input.trim() || (scope === 'doc' ? !p.texts : !active.length)} title="Envoyer (Entrée)">
+              ↑
+            </button>
+          )}
+        </div>
+        <small className="composer-hint">
+          {lastEngine() ? `Moteur : ${lastEngine()} · ` : ''}Entrée pour envoyer · Maj+Entrée pour aller à la ligne
+        </small>
       </form>
     </div>
   );

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { ui } from '../dialogs';
 import type { PDFDocumentProxy } from '../pdf/engine';
 import {
   allMemories, allNotes, clearAllData, exportAllData, importAllData, type AppSettings,
@@ -32,7 +33,7 @@ const SHORTCUTS: [string, string][] = [
   ['Ctrl+F', 'Rechercher'], ['Ctrl+Z / Ctrl+Y', 'Annuler / rétablir'], ['Ctrl + / −', 'Zoom'], ['Ctrl+0', 'Pleine largeur'],
   ['← → Début Fin', 'Navigation'], ['V', 'Sélection'], ['H U S', 'Surligner / souligner / barrer'], ['D', 'Dessin libre'],
   ['R E A', 'Rectangle / ellipse / flèche'], ['T N', 'Texte / note'], ['M', 'Mesure'], ['W', 'Correcteur blanc'],
-  ['X', 'Gomme'], ['F', 'Mode concentration'], ['Échap', 'Revenir à la sélection'],
+  ['X', 'Gomme'], ['Ctrl+Maj+F', 'Mode concentration'], ['Échap', 'Revenir à la sélection'],
 ];
 
 export function SettingsPanel({ doc, settings, setSettings, notify }: Props) {
@@ -423,7 +424,7 @@ function DataView({ notify }: { notify: (m: string) => void }) {
       <button
         className="danger"
         onClick={async () => {
-          if (!confirm('Effacer toutes les annotations, notes, signatures et réglages mémorisés sur cet appareil ?')) return;
+          if (!(await ui.confirm('Effacer toutes les annotations, notes, signatures et réglages mémorisés sur cet appareil ?', { ok: 'Tout effacer', danger: true }))) return;
           await clearAllData();
           notify('Données effacées.');
           refresh();

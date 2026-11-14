@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { ui } from '../dialogs';
 import { allNotes, loadNotes, saveNotes, type DocNotes } from '../memory';
 import { baseName, download } from '../pdf/tools';
 import type { Annotation } from '../types';
@@ -79,7 +80,7 @@ export function NotesPanel(p: Props) {
   const quoteSelection = () => {
     const sel = window.getSelection()?.toString().replace(/\s+/g, ' ').trim();
     if (!sel) {
-      alert("Sélectionnez d'abord un passage dans le document.");
+      ui.alert("Sélectionnez d'abord un passage dans le document.");
       return;
     }
     insert(`> « ${sel} » [p. ${p.currentPage + 1}]\n`);
@@ -90,7 +91,7 @@ export function NotesPanel(p: Props) {
       .filter((a) => a.text && ['highlight', 'underline', 'note'].includes(a.kind))
       .sort((a, b) => a.page - b.page);
     if (!hl.length) {
-      alert('Aucun surlignage ni note avec du texte dans ce document.');
+      ui.alert('Aucun surlignage ni note avec du texte dans ce document.');
       return;
     }
     insert(`## Mes surlignages\n\n${hl.map((a) => `- ${a.kind === 'note' ? '🗨 ' : ''}${a.text} [p. ${a.page + 1}]`).join('\n')}\n`);
@@ -140,7 +141,7 @@ export function NotesPanel(p: Props) {
                     setDictating(false);
                     setInterim('');
                   },
-                  onError: (e) => alert(e),
+                  onError: (e) => ui.alert(e),
                 });
               }}
             >

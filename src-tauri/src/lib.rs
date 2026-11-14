@@ -18,6 +18,12 @@ fn take_opened_files(state: tauri::State<OpenedFiles>) -> Vec<String> {
     std::mem::take(&mut *state.0.lock().unwrap())
 }
 
+/// Auto-test : la page renvoie son diagnostic, affiché dans la console.
+#[tauri::command]
+fn selftest_report(report: String) {
+    println!("SELFTEST {report}");
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default();
@@ -45,8 +51,22 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_http::init())
         .manage(OpenedFiles(Mutex::new(pdf_args(std::env::args()))))
-        .invoke_handler(tauri::generate_handler![take_opened_files])
+        .invoke_handler(tauri::generate_handler![take_opened_files, selftest_report])
+        .setup(|_app| {
+            // Auto-test (version de développement) : NOVA_SELFTEST=1 affiche le diagnostic de l'IA.
+            #[cfg(debug_assertions)]
+            if std::env::var("NOVA_SELFTEST").is_ok() {
+                if let Some(w) = _app.get_webview_window("main") {
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_secs(8));
+                        let _ = w.eval("window.__novaDiag && window.__novaDiag().then(d => window.__TAURI_INTERNALS__.invoke('selftest_report', { report: JSON.stringify(d) })).catch(e => window.__TAURI_INTERNALS__.invoke('selftest_report', { report: 'ERR ' + e }))");
+                    });
+                }
+            }
+            Ok(())
+        })
         .build(tauri::generate_context!())
         .expect("erreur au démarrage de Nova PDF");
 

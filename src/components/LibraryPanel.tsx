@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
+import { ui } from '../dialogs';
 import { listLibrary, removeFromLibrary, searchLibrary, updateLibItem, type LibHit, type LibItem } from '../library';
 
 interface Props {
   onOpen: (id: string, page?: number) => void;
   onImport: () => void;
   activeId?: string;
+  onItemMenu?: (e: React.MouseEvent, item: LibItem) => void;
 }
 
 /** Bibliothèque : dossiers, étiquettes, favoris, recherche dans tous les PDF. */
-export function LibraryPanel({ onOpen, onImport, activeId }: Props) {
+export function LibraryPanel({ onOpen, onImport, activeId, onItemMenu }: Props) {
   const [items, setItems] = useState<LibItem[]>([]);
   const [folder, setFolder] = useState<string | null>(null); // null = tous
   const [tag, setTag] = useState<string | null>(null);
@@ -104,7 +106,7 @@ export function LibraryPanel({ onOpen, onImport, activeId }: Props) {
           )}
           <ul className="lib-list">
             {shown.map((i) => (
-              <li key={i.id} className={i.id === activeId ? 'current' : ''}>
+              <li key={i.id} className={i.id === activeId ? 'current' : ''} onContextMenu={(e) => onItemMenu?.(e, i)}>
                 <button className="lib-open" onClick={() => onOpen(i.id)} title="Ouvrir">
                   <span className="lib-icon">📄</span>
                   <span className="lib-name">
@@ -163,7 +165,7 @@ function Editor({ item, folders, onDone }: { item: LibItem; folders: string[]; o
         <button
           className="danger"
           onClick={async () => {
-            if (confirm(`Retirer « ${item.name} » de la bibliothèque ?`)) await removeFromLibrary(item.id);
+            if (await ui.confirm(`Retirer « ${item.name} » de la bibliothèque ?`, { ok: 'Retirer', danger: true })) await removeFromLibrary(item.id);
             onDone();
           }}
         >

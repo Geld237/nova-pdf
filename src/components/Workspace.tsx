@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { ui } from '../dialogs';
 import { Icon, type IconName } from '../icons';
 import { openPdf, renderPageToCanvas, type PDFDocumentProxy } from '../pdf/engine';
 import { baseName, download, extractPages, mergePdfs, reorderPages, splitPdf } from '../pdf/tools';
@@ -166,7 +167,7 @@ function ExtractWS({ ctx, onDone }: { ctx: DocCtx; onDone: () => void }) {
           className="danger"
           disabled={!list.length || list.length === n}
           onClick={async () => {
-            if (!confirm(`Supprimer ${list.length} page(s) du document ?`)) return;
+            if (!(await ui.confirm(`Supprimer ${list.length} page(s) du document ?`, { ok: 'Supprimer', danger: true }))) return;
             await ctx.replace(await reorderPages(await ctx.getBytes(), range(n).filter((i) => !sel.has(i)).map((i) => ({ src: i, rotate: 0 }))), `${list.length} page(s) supprimée(s)`);
             onDone();
           }}
@@ -349,7 +350,7 @@ function MergeWS({ ctx, onDone }: { ctx: DocCtx; onDone: () => void }) {
       for (const f of Array.from(i.files ?? [])) {
         const bytes = new Uint8Array(await f.arrayBuffer());
         try {
-          added.push({ key: `${f.name}-${Math.random()}`, name: f.name, bytes, pdf: await openPdf(bytes, () => prompt(`Mot de passe de « ${f.name} » :`)) });
+          added.push({ key: `${f.name}-${Math.random()}`, name: f.name, bytes, pdf: await openPdf(bytes, () => ui.prompt(`Mot de passe de « ${f.name} » :`, '', { password: true })) });
         } catch {
           ctx.notify(`« ${f.name} » ne peut pas être ouvert.`);
         }

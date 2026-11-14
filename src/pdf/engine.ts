@@ -11,7 +11,7 @@ export type { PDFDocumentProxy };
 /** Ouvre un PDF à partir d'octets. Demande un mot de passe si nécessaire. */
 export async function openPdf(
   bytes: Uint8Array,
-  askPassword: (retry: boolean) => string | null,
+  askPassword: (retry: boolean) => string | null | Promise<string | null>,
 ): Promise<PDFDocumentProxy> {
   return (await openPdfWithPassword(bytes, askPassword)).doc;
 }
@@ -19,18 +19,19 @@ export async function openPdf(
 /** Comme openPdf, mais renvoie aussi le mot de passe saisi (pour déchiffrer ensuite). */
 export async function openPdfWithPassword(
   bytes: Uint8Array,
-  askPassword: (retry: boolean) => string | null,
+  askPassword: (retry: boolean) => string | null | Promise<string | null>,
 ): Promise<{ doc: PDFDocumentProxy; password?: string }> {
   let password: string | undefined;
   // pdf.js transfère le buffer au worker : on lui passe une copie.
   const task = pdfjs.getDocument({ data: bytes.slice() });
   task.onPassword = (update: (pw: string) => void, reason: number) => {
-    const pw = askPassword(reason === pdfjs.PasswordResponses.INCORRECT_PASSWORD);
-    if (pw === null) task.destroy();
-    else {
-      password = pw;
-      update(pw);
-    }
+    Promise.resolve(askPassword(reason === pdfjs.PasswordResponses.INCORRECT_PASSWORD)).then((pw) => {
+      if (pw === null) task.destroy();
+      else {
+        password = pw;
+        update(pw);
+      }
+    });
   };
   const doc = await task.promise;
   return { doc, password };

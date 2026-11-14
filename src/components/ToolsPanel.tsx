@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { ui } from '../dialogs';
 import { Section, ToolNav } from './ToolSection';
 import { Icon, type IconName } from '../icons';
 import { canvasToBlob, extractAllText, openPdf, renderPageToCanvas, type PDFDocumentProxy } from '../pdf/engine';
@@ -418,7 +419,7 @@ export function ToolsPanel({ ctx }: { ctx: DocCtx }) {
           onClick={wrap('Comparaison', async () => {
             const [f] = await pickFiles('application/pdf', false);
             if (!f) return;
-            const other = await openPdf(new Uint8Array(await f.arrayBuffer()), () => prompt('Mot de passe ?'));
+            const other = await openPdf(new Uint8Array(await f.arrayBuffer()), () => ui.prompt('Mot de passe du document à comparer :', '', { password: true }));
             const a = (ctx.texts ?? (await extractAllText(ctx.pdf))).map((t) => t.text).join('\n');
             const b = (await extractAllText(other)).map((t) => t.text).join('\n');
             setDiff(diffLines(a, b));

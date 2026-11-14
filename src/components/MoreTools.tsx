@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { ui } from '../dialogs';
 import { Section } from './ToolSection';
 import { extractAllText } from '../pdf/engine';
 import {
@@ -118,7 +119,7 @@ export function MoreTools({ ctx, outline, run }: { ctx: DocCtx; outline: Outline
         <button onClick={run('Déverrouillage', async () => {
           const [f] = await pick('application/pdf', false);
           if (!f) return;
-          const p = prompt(`Mot de passe de « ${f.name} » :`);
+          const p = await ui.prompt(`Mot de passe de « ${f.name} » :`, '', { password: true });
           if (p === null) return;
           ctx.openNew(await unlockPdf(new Uint8Array(await f.arrayBuffer()), p), f.name.replace(/\.pdf$/i, '-deverrouille.pdf'));
         })}>Choisir un fichier protégé…</button>

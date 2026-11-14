@@ -204,6 +204,7 @@ export const customCpuModelName = () => (customModel as File | undefined)?.name;
 
 async function cpuChat(settings: AiSettings, messages: ChatMessage[], onToken: (t: string) => void, onProgress: (text: string, ratio: number) => void, signal?: AbortSignal) {
   const w = await ensureCpu(settings.cpuModel, onProgress, customModel);
+  engineLabel = `processeur (${customModel ? (customModel as File).name : CPU_MODELS.find((m) => m.id === settings.cpuModel)?.label.split(' —')[0] ?? settings.cpuModel})`;
   onProgress('Lecture du texte par le processeur… (plus lent que la carte graphique)', 0.99);
   let full = '';
   let first = true;
@@ -230,14 +231,42 @@ function frenchProgress(t: string) {
   return t;
 }
 
+/**
+ * Requêtes vers Ollama. Dans l'application de bureau, elles passent par la partie native
+ * (pas de restriction CORS : sous Windows, l'origine « http://tauri.localhost » est refusée par Ollama).
+ */
+async function ollamaFetch(url: string, init?: RequestInit): Promise<Response> {
+  const { isTauri } = await import('../platform');
+  if (isTauri) {
+    const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
+    return tauriFetch(url, init);
+  }
+  return fetch(url, init);
+}
+
 async function ollamaReachable(url: string) {
   try {
-    const r = await fetch(`${url.replace(/\/$/, '')}/api/tags`, { signal: AbortSignal.timeout(1500) });
+    const r = await ollamaFetch(`${url.replace(/\/$/, '')}/api/tags`, { signal: AbortSignal.timeout(1500) });
     return r.ok;
   } catch {
     return false;
   }
 }
+
+/** « ok », « blocked » (Ollama tourne mais refuse cette origine) ou « absent ». */
+export async function ollamaStatus(url: string): Promise<'ok' | 'blocked' | 'absent'> {
+  if (await ollamaReachable(url)) return 'ok';
+  try {
+    await fetch(`${url.replace(/\/$/, '')}/api/tags`, { mode: 'no-cors', signal: AbortSignal.timeout(1500) });
+    return 'blocked';
+  } catch {
+    return 'absent';
+  }
+}
+
+let engineLabel = '';
+/** Moteur réellement utilisé pour la dernière réponse (affiché sous la zone de saisie). */
+export const lastEngine = () => engineLabel;
 
 export async function chat(
   settings: AiSettings,
@@ -258,6 +287,7 @@ export async function chat(
   let full = '';
   const generate = async () => {
     const eng = await ensureWebLLM(settings.webllmModel, onProgress);
+    engineLabel = `carte graphique (${engineModel.replace(/-Instruct.*$/, '')})`;
     const stream = await eng.chat.completions.create({ messages, stream: true, temperature: 0.3 });
     for await (const part of stream) {
       if (signal?.aborted) {
@@ -314,7 +344,8 @@ async function ollamaChat(settings: AiSettings, messages: ChatMessage[], onToken
   } catch (e) {
     if ((e as Error).message.startsWith('Ollama ne contient')) throw e;
   }
-  const res = await fetch(`${settings.ollamaUrl.replace(/\/$/, '')}/api/chat`, {
+  engineLabel = `Ollama (${model})`;
+  const res = await ollamaFetch(`${settings.ollamaUrl.replace(/\/$/, '')}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ model, messages, stream: true, options: { temperature: 0.3 } }),
@@ -348,7 +379,7 @@ async function ollamaChat(settings: AiSettings, messages: ChatMessage[], onToken
 }
 
 export async function listOllamaModels(url: string): Promise<string[]> {
-  const r = await fetch(`${url.replace(/\/$/, '')}/api/tags`);
+  const r = await ollamaFetch(`${url.replace(/\/$/, '')}/api/tags`);
   const j = await r.json();
   return (j.models ?? []).map((m: { name: string }) => m.name);
 }
@@ -356,5 +387,8 @@ export async function listOllamaModels(url: string): Promise<string[]> {
 /** Diagnostic affiché dans les réglages de l'IA. */
 export async function aiDiagnostics(ollamaUrl: string) {
   const g = await gpuInfo();
-  return { webgpu: g.ok, f16: g.f16, ollama: await ollamaReachable(ollamaUrl) };
+  const st = await ollamaStatus(ollamaUrl);
+  let models: string[] = [];
+  if (st === 'ok') models = await listOllamaModels(ollamaUrl).catch(() => []);
+  return { webgpu: g.ok, f16: g.f16, ollama: st === 'ok', ollamaBlocked: st === 'blocked', ollamaModels: models };
 }

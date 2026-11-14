@@ -5,7 +5,7 @@ import { isNative, isTauri, listenOpenedFiles, nativeOpenPdfs, saveFile, writeNa
 import { applyAnnotations } from './pdf/writer';
 import { DEFAULT_SETTINGS, appendNote, loadMemory, loadSetting, saveMemory, saveSetting, type AppSettings } from './memory';
 import { STAMP_PRESETS, makeStamp } from './stamps';
-import { applyAppUpdate, checkForAppUpdate, checkNativeUpdate, onUpdateState, updateState, type NativeUpdate } from './update';
+import { APP_VERSION, applyAppUpdate, checkForAppUpdate, checkNativeUpdate, onUpdateState, updateState, type NativeUpdate } from './update';
 import { NotesPanel } from './components/NotesPanel';
 import { LibraryPanel } from './components/LibraryPanel';
 import { StudyPanel } from './components/StudyPanel';
@@ -13,7 +13,7 @@ import { SharePanel } from './components/SharePanel';
 import { TranslateView } from './components/TranslateView';
 import { Presentation } from './components/Presentation';
 import { ScanModal } from './components/ScanModal';
-import { addToLibrary, getLibFile, getLibText, listLibrary, saveLibText, updateLibItem, type LibItem } from './library';
+import { addToLibrary, getLibFile, getLibText, listLibrary, removeFromLibrary, saveLibText, updateLibItem, type LibItem } from './library';
 import { extractReferences, refMap } from './refs';
 import { listen, parseCommand, speechSupported } from './voice';
 import { session } from './p2p';
@@ -36,6 +36,7 @@ import type { ToolOptions } from './components/PageView';
 import { Icon, type IconName } from './icons';
 import { ContextMenu, type MenuItem, type MenuState } from './components/ContextMenu';
 import { Workspace, type WorkspaceKind } from './components/Workspace';
+import { DialogHost, ui } from './dialogs';
 import { download, extractPages, reorderPages, baseName } from './pdf/tools';
 import { renderPageToCanvas, canvasToBlob } from './pdf/engine';
 import { loadDeck, newCard, saveDeck } from './study';
@@ -128,6 +129,7 @@ export default function App() {
   const stopVoice = useRef<(() => void) | null>(null);
   const sigResolver = useRef<((s: string | null) => void) | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const pointerStart = useRef<[number, number] | null>(null);
   const [workspace, setWorkspace] = useState<WorkspaceKind | null>(null);
   const [signature, setSignature] = useState<string | null>(null);
   const [sigModal, setSigModal] = useState(false);
@@ -211,7 +213,7 @@ export default function App() {
       let encrypted = false;
       try {
         const r = await openPdfWithPassword(bytes, (retry) =>
-          prompt(retry ? 'Mot de passe incorrect. Réessayez :' : `« ${name} » est protégé. Mot de passe :`),
+          ui.prompt(retry ? 'Mot de passe incorrect. Réessayez :' : `« ${name} » est protégé par un mot de passe :`, '', { password: true }),
         );
         pdf = r.doc;
         if (r.password !== undefined) {
@@ -524,13 +526,13 @@ export default function App() {
     document.body.appendChild(f);
   };
 
-  const closeDoc = (id: string) => {
-    const d = docs.find((x) => x.id === id);
-    if (d?.dirty && settings.confirmClose && !confirm(`« ${d.name} » a des modifications non enregistrées (les annotations restent mémorisées). Fermer ?`)) return;
+  const closeDoc = async (id: string) => {
+    const d = docsRef.current.find((x) => x.id === id);
+    if (d?.dirty && settings.confirmClose && !(await ui.confirm(`« ${d.name} » a des modifications non enregistrées (les annotations restent mémorisées). Fermer quand même ?`, { ok: 'Fermer' }))) return;
     d?.pdf.cleanup().catch(() => {});
-    const rest = docs.filter((x) => x.id !== id);
+    const rest = docsRef.current.filter((x) => x.id !== id);
     setDocs(rest);
-    if (activeId === id) setActiveId(rest[rest.length - 1]?.id ?? null);
+    setActiveId((cur) => (cur === id ? rest[rest.length - 1]?.id ?? null : cur));
   };
 
   const goTo = useCallback((p: number) => viewer.current?.scrollToPage(p), []);
@@ -646,9 +648,9 @@ export default function App() {
   const order = (n: number) => Array.from({ length: n }, (_, i) => ({ src: i, rotate: 0 }));
   const rotatePage = (i: number, deg: number) =>
     pageOp(`Page ${i + 1} pivotée`, (b, n) => reorderPages(b, order(n).map((o) => (o.src === i ? { ...o, rotate: deg } : o))));
-  const deletePage = (i: number) => {
+  const deletePage = async (i: number) => {
     if (!doc || doc.sizes.length < 2) return notify('Impossible de supprimer la seule page.');
-    if (!confirm(`Supprimer la page ${i + 1} ?`)) return;
+    if (!(await ui.confirm(`Supprimer la page ${i + 1} ?`, { ok: 'Supprimer', danger: true }))) return;
     pageOp(`Page ${i + 1} supprimée`, (b, n) => reorderPages(b, order(n).filter((o) => o.src !== i)));
   };
   const insertBlank = (i: number) =>
@@ -718,7 +720,7 @@ export default function App() {
           label: 'Créer une fiche de révision',
           icon: 'card',
           action: async () => {
-            const q = prompt('Question de la fiche (la sélection sera la réponse) :', `Que dit le document sur « ${short} » ?`);
+            const q = await ui.prompt('Question de la fiche (la sélection sera la réponse) :', `Que dit le document sur « ${short} » ?`);
             if (!q) return;
             const deck = await loadDeck(doc.fingerprint, doc.name);
             await saveDeck({ ...deck, cards: [...deck.cards, newCard(q, sel, pi)] });
@@ -809,6 +811,71 @@ export default function App() {
     setMenu({ x: e.clientX, y: e.clientY, items: [{ label: 'Aller à la page', icon: 'pages', action: () => goTo(i) }, 'sep', ...pageMenuItems(i)] });
   };
 
+  /** Clic droit sur un document de la bibliothèque ou des récents. */
+  const libItemMenu = (e: React.MouseEvent, item: LibItem) => {
+    e.preventDefault();
+    const open = docsRef.current.find((d) => d.fingerprint === item.id);
+    setMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        { header: item.name },
+        { label: open ? 'Afficher l’onglet' : 'Ouvrir', icon: 'open', action: () => openFromLibrary(item.id) },
+        {
+          label: 'Reprendre à la dernière page lue',
+          icon: 'reading',
+          action: async () => openFromLibrary(item.id, (await loadMemory(item.id))?.lastPage ?? 0),
+        },
+        { label: 'Présenter', icon: 'present', action: async () => { await openFromLibrary(item.id); setTimeout(() => setPresenting(true), 300); } },
+        'sep',
+        { label: item.favorite ? 'Retirer des favoris' : 'Ajouter aux favoris', icon: 'bookmarks', action: () => updateLibItem(item.id, { favorite: !item.favorite }) },
+        {
+          label: 'Ranger dans un dossier…',
+          icon: 'library',
+          action: async () => {
+            const f = await ui.prompt('Dossier (ex. Cours/Chimie, vide = racine) :', item.folder);
+            if (f !== null) updateLibItem(item.id, { folder: f.trim().replace(/^\/+|\/+$/g, '') });
+          },
+        },
+        {
+          label: 'Étiquettes…',
+          icon: 'hash',
+          action: async () => {
+            const t = await ui.prompt('Étiquettes séparées par des virgules :', item.tags.join(', '));
+            if (t !== null) updateLibItem(item.id, { tags: t.split(',').map((x) => x.trim().replace(/^#/, '')).filter(Boolean) });
+          },
+        },
+        {
+          label: 'Renommer…',
+          icon: 'edit',
+          action: async () => {
+            const n = await ui.prompt('Nouveau nom :', item.name);
+            if (n?.trim()) updateLibItem(item.id, { name: /\.pdf$/i.test(n) ? n.trim() : `${n.trim()}.pdf` });
+          },
+        },
+        {
+          label: 'Enregistrer une copie…',
+          icon: 'save',
+          action: async () => {
+            const b = await getLibFile(item.id);
+            if (b) download(b, item.name);
+          },
+        },
+        { label: 'Afficher dans la bibliothèque', icon: 'library', action: () => setPanel('library') },
+        'sep',
+        {
+          label: 'Retirer de la bibliothèque',
+          icon: 'trash',
+          danger: true,
+          action: async () => {
+            if (await ui.confirm(`Retirer « ${item.name} » de la bibliothèque et des documents récents ? (le fichier d'origine n'est pas supprimé)`, { ok: 'Retirer', danger: true }))
+              removeFromLibrary(item.id);
+          },
+        },
+      ],
+    });
+  };
+
   const onTabMenu = (e: React.MouseEvent, id: string) => {
     e.preventDefault();
     const d = docs.find((x) => x.id === id);
@@ -875,6 +942,7 @@ export default function App() {
       if (!doc) return;
       if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); save(e.shiftKey); return; }
       if (mod && e.key.toLowerCase() === 'p') { e.preventDefault(); print(); return; }
+      if (mod && e.shiftKey && e.key.toLowerCase() === 'f') { e.preventDefault(); setFocus((f) => !f); return; }
       if (mod && e.key.toLowerCase() === 'f') { e.preventDefault(); setSidebar(true); setSideTab('search'); return; }
       if (typing) return;
       if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
@@ -884,7 +952,6 @@ export default function App() {
       if (mod && e.key === '0') { e.preventDefault(); setFit('width'); return; }
       if (mod) return;
       if (e.key === 'Escape') { setTool('select'); setFocus(false); return; }
-      if (e.key === 'f') { setFocus((f) => !f); return; }
       if (e.key === 'PageDown' || (e.key === 'ArrowRight' && !e.shiftKey)) { goTo(Math.min(page + 1, doc.sizes.length - 1)); e.preventDefault(); return; }
       if (e.key === 'PageUp' || (e.key === 'ArrowLeft' && !e.shiftKey)) { goTo(Math.max(page - 1, 0)); e.preventDefault(); return; }
       if (e.key === 'Home') { goTo(0); return; }
@@ -942,7 +1009,7 @@ export default function App() {
       }}
     >
       <header className="topbar">
-        {doc && (
+        {doc && !isNative && (
           <div className="brand" title="Nova PDF">
             <img className="logo" src="./icon.svg" alt="Nova PDF" />
           </div>
@@ -1019,8 +1086,8 @@ export default function App() {
                   ))}
                 </select>
                 <button
-                  onClick={() => {
-                    const t = prompt('Texte du tampon personnalisé :');
+                  onClick={async () => {
+                    const t = await ui.prompt('Texte du tampon personnalisé :');
                     if (t) setOpts({ ...opts, stamp: makeStamp(t.toUpperCase(), opts.color === '#ffeb3b' ? '#3d52d5' : opts.color) });
                   }}
                 >
@@ -1116,38 +1183,45 @@ export default function App() {
           ) : doc ? (
             <>
               <div className="viewbar">
-                <button className="icon" onClick={() => setSidebar(!sidebar)} title="Panneau latéral"><Icon name="sidebar" /></button>
-                <span className="pager">
-                  <input
-                    aria-label="Page"
-                    value={page + 1}
-                    onChange={(e) => {
-                      const n = parseInt(e.target.value, 10);
-                      if (n >= 1 && n <= doc.sizes.length) goTo(n - 1);
-                    }}
-                  />
-                  / {doc.sizes.length}
-                </span>
-                <button className="icon" onClick={() => zoom(1 / 1.15)} title="Zoom arrière"><Icon name="zoomOut" /></button>
-                <span className="zoom">{Math.round(scale * 100)} %</span>
-                <button className="icon" onClick={() => zoom(1.15)} title="Zoom avant"><Icon name="zoomIn" /></button>
-                <select value={fit ?? ''} onChange={(e) => setFit((e.target.value || null) as typeof fit)}>
-                  <option value="">Zoom libre</option>
-                  <option value="width">Pleine largeur</option>
-                  <option value="page">Page entière</option>
-                </select>
-                <select value={layout} onChange={(e) => setLayout(e.target.value as typeof layout)}>
-                  <option value="single">Une page</option>
-                  <option value="double">Deux pages</option>
-                </select>
+                <button
+                  className="icon"
+                  onClick={() => {
+                    if (focus) {
+                      setFocus(false);
+                      setSidebar(true);
+                    } else setSidebar(!sidebar);
+                  }}
+                  title="Panneau latéral"
+                >
+                  <Icon name="sidebar" />
+                </button>
+                <button className="icon" disabled={page === 0} onClick={() => goTo(page - 1)} title="Page précédente (←)"><Icon name="back" /></button>
+                <PageInput page={page} total={doc.sizes.length} onGo={goTo} />
+                <button className="icon" disabled={page >= doc.sizes.length - 1} onClick={() => goTo(page + 1)} title="Page suivante (→)"><Icon name="next" /></button>
+                <span className="sep" />
                 <button className={`icon ${night ? 'active' : ''}`} onClick={() => setNight(!night)} title="Mode nuit (inverse les couleurs des pages)"><Icon name="night" /></button>
-                <button className="icon" onClick={() => setFocus(!focus)} title="Mode concentration (F)"><Icon name="focus" /></button>
+                <button className="icon" onClick={() => setFocus(!focus)} title="Mode concentration (Ctrl+Maj+F)"><Icon name="focus" /></button>
                 <button className="icon" onClick={() => setPresenting(true)} title="Présenter (plein écran, pointeur laser)"><Icon name="present" /></button>
                 <button className="icon" disabled={!doc.texts} onClick={() => setTranslating(true)} title="Traduction côte à côte"><Icon name="translate" /></button>
                 <button className={`icon ${settings.readingRuler ? 'active' : ''}`} onClick={() => setSettings({ ...settings, readingRuler: !settings.readingRuler })} title="Règle de lecture"><Icon name="ruler" /></button>
                 {doc.review && <span className="ok-badge">● relecture partagée</span>}
               </div>
-              <div className="viewer-host" onContextMenu={onViewerMenu}>
+              <div
+                className="viewer-host"
+                onContextMenu={onViewerMenu}
+                onPointerDown={(e) => {
+                  if (e.button === 0) pointerStart.current = [e.clientX, e.clientY];
+                }}
+                onPointerUp={(e) => {
+                  const s0 = pointerStart.current;
+                  pointerStart.current = null;
+                  if (!s0 || Math.hypot(e.clientX - s0[0], e.clientY - s0[1]) > 4) return; // glissement / sélection
+                  if (window.getSelection()?.toString()) return;
+                  if (tool !== 'select' && tool !== 'hand') return; // un outil d'annotation est en cours
+                  // les panneaux « outils » se ferment ; ceux qu'on consulte en lisant (IA, notes, étude, lecture) restent
+                  if (panel && ['tools', 'form', 'settings', 'library', 'share'].includes(panel)) setPanel(null);
+                }}
+              >
               <Viewer
                 ref={viewer}
                 doc={doc.pdf}
@@ -1176,6 +1250,7 @@ export default function App() {
               onDemo={async () => void (await loadInto(await makeDemoPdf(), 'demo-nova-pdf.pdf'))}
               onScan={() => setScanning(true)}
               onLibrary={(id) => (id ? openFromLibrary(id) : setPanel('library'))}
+              onItemMenu={libItemMenu}
               onStudy={async () => {
                 const d = (await allDecks()).find((x) => dueCards(x).length);
                 if (!d) return;
@@ -1196,7 +1271,7 @@ export default function App() {
                 notify={notify}
               />
             )}
-            {panel === 'library' && <LibraryPanel onOpen={openFromLibrary} onImport={openDialog} activeId={doc?.fingerprint} />}
+            {panel === 'library' && <LibraryPanel onOpen={openFromLibrary} onImport={openDialog} activeId={doc?.fingerprint} onItemMenu={libItemMenu} />}
             {panel === 'share' && (
               <SharePanel
                 ctx={ctx}
@@ -1274,6 +1349,7 @@ export default function App() {
               className={(id === 'organize' ? workspace === 'organize' : panel === id) ? 'active' : ''}
               disabled={needsDoc && !doc}
               onClick={() => {
+                if (focus) setFocus(false);
                 if (id === 'organize') return setWorkspace(workspace === 'organize' ? null : 'organize');
                 if (workspace) {
                   setWorkspace(null);
@@ -1290,6 +1366,53 @@ export default function App() {
           ))}
         </nav>
       </main>
+
+      <footer className="statusbar">
+        {doc ? (
+          <>
+            <span className="sb-item" title={doc.name}>
+              <Icon name="file" size={13} /> Page {page + 1} sur {doc.sizes.length}
+            </span>
+            <span className="sb-item muted">
+              {doc.sizes[page] ? `${Math.round((doc.sizes[page].w / 72) * 25.4)} × ${Math.round((doc.sizes[page].h / 72) * 25.4)} mm` : ''}
+            </span>
+            {doc.annotations.length > 0 && <span className="sb-item muted">{doc.annotations.length} annotation(s)</span>}
+            {doc.dirty && <span className="sb-item warn-dot">● Modifications non enregistrées</span>}
+            {doc.review && <span className="sb-item ok-badge">● Relecture partagée</span>}
+            <span className="spacer" />
+            <div className="seg sb-seg" role="group" aria-label="Disposition">
+              <button className={layout === 'single' ? 'active' : ''} onClick={() => setLayout('single')} title="Une page"><Icon name="pages" size={14} /></button>
+              <button className={layout === 'double' ? 'active' : ''} onClick={() => setLayout('double')} title="Deux pages"><Icon name="grid" size={14} /></button>
+            </div>
+            <div className="seg sb-seg" role="group" aria-label="Ajustement">
+              <button className={fit === 'width' ? 'active' : ''} onClick={() => setFit('width')} title="Pleine largeur (Ctrl+0)">Largeur</button>
+              <button className={fit === 'page' ? 'active' : ''} onClick={() => setFit('page')} title="Page entière">Page</button>
+            </div>
+            <button className="icon sb-btn" onClick={() => zoom(1 / 1.15)} title="Zoom arrière (Ctrl −)"><Icon name="zoomOut" size={14} /></button>
+            <input
+              className="zoom-slider"
+              type="range"
+              min={25}
+              max={400}
+              step={5}
+              value={Math.round(scale * 100)}
+              onChange={(e) => {
+                setFit(null);
+                setScale(+e.target.value / 100);
+              }}
+              aria-label="Zoom"
+            />
+            <button className="icon sb-btn" onClick={() => zoom(1.15)} title="Zoom avant (Ctrl +)"><Icon name="zoomIn" size={14} /></button>
+            <button className="sb-zoom" onClick={() => { setFit(null); setScale(1); }} title="Taille réelle (100 %)">{Math.round(scale * 100)} %</button>
+          </>
+        ) : (
+          <>
+            <span className="sb-item muted">Nova PDF {APP_VERSION}</span>
+            <span className="spacer" />
+            <span className="sb-item muted">🔒 Tout reste sur cet appareil</span>
+          </>
+        )}
+      </footer>
 
       {sigModal && (
         <SignatureModal
@@ -1334,7 +1457,13 @@ export default function App() {
           }}
         />
       )}
+      {focus && (
+        <button className="focus-exit" onClick={() => setFocus(false)} title="Quitter le mode concentration (Échap)">
+          <Icon name="close" size={14} /> Quitter le mode concentration
+        </button>
+      )}
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
+      <DialogHost />
       {dragOver && <div className="drop-overlay">Déposez vos PDF ici</div>}
       {toast && <div className="toast" role="status">{toast}</div>}
     </div>
@@ -1342,8 +1471,9 @@ export default function App() {
 }
 
 function Welcome({
-  onOpen, onDemo, onScan, onLibrary, onStudy,
+  onOpen, onDemo, onScan, onLibrary, onStudy, onItemMenu,
 }: {
+  onItemMenu: (e: React.MouseEvent, item: LibItem) => void;
   onOpen: () => void;
   onDemo: () => void;
   onScan: () => void;
@@ -1353,8 +1483,11 @@ function Welcome({
   const [recent, setRecent] = useState<LibItem[]>([]);
   const [due, setDue] = useState(0);
   useEffect(() => {
-    listLibrary().then((l) => setRecent(l.slice(0, 6)));
+    const load = () => listLibrary().then((l) => setRecent(l.slice(0, 6)));
+    load();
+    window.addEventListener('nova:library-changed', load);
     allDecks().then((ds) => setDue(ds.reduce((n, d) => n + dueCards(d).length, 0)));
+    return () => window.removeEventListener('nova:library-changed', load);
   }, []);
   return (
     <div className="welcome">
@@ -1390,7 +1523,7 @@ function Welcome({
               </div>
               <div className="recent-grid">
                 {recent.map((r) => (
-                  <button key={r.id} onClick={() => onLibrary(r.id)} title={r.name}>
+                  <button key={r.id} onClick={() => onLibrary(r.id)} onContextMenu={(e) => onItemMenu(e, r)} title={`${r.name} — clic droit pour plus d'options`}>
                     <span>📄</span>
                     <b>{r.name}</b>
                     <small>{r.pages} p. · {new Date(r.openedAt).toLocaleDateString('fr-FR')}</small>
@@ -1428,5 +1561,44 @@ function Welcome({
       )}
       <p className="muted small">100 % local · Open source (MIT) · Installable comme application</p>
     </div>
+  );
+}
+
+/** Champ « page » : on peut taper librement, la page s'ouvre à Entrée ou en quittant le champ. */
+function PageInput({ page, total, onGo }: { page: number; total: number; onGo: (p: number) => void }) {
+  const [v, setV] = useState(String(page + 1));
+  const [editing, setEditing] = useState(false);
+  useEffect(() => {
+    if (!editing) setV(String(page + 1));
+  }, [page, editing]);
+  const commit = () => {
+    const n = parseInt(v, 10);
+    if (n >= 1 && n <= total) onGo(n - 1);
+    else setV(String(page + 1));
+    setEditing(false);
+  };
+  return (
+    <span className="pager">
+      <input
+        aria-label="Numéro de page"
+        inputMode="numeric"
+        value={v}
+        onFocus={(e) => {
+          setEditing(true);
+          e.target.select();
+        }}
+        onChange={(e) => setV(e.target.value.replace(/\D/g, ''))}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+          if (e.key === 'Escape') {
+            setV(String(page + 1));
+            setEditing(false);
+            (e.target as HTMLInputElement).blur();
+          }
+        }}
+      />
+      <span className="muted">/ {total}</span>
+    </span>
   );
 }

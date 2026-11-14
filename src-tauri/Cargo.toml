@@ -1,6 +1,6 @@
 [package]
 name = "nova-pdf"
-version = "0.6.1"
+version = "0.7.0"
 description = "Nova PDF — lecteur PDF libre et privé avec IA locale"
 authors = ["Georges Eloundou"]
 license = "MIT"
@@ -22,6 +22,7 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-opener = "2"
+tauri-plugin-http = "2"
 
 [target.'cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))'.dependencies]
 tauri-plugin-single-instance = "2"

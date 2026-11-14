@@ -241,6 +241,9 @@ Le dépôt contient un workflow GitHub Actions qui publie automatiquement l'app 
 
 ### Utiliser Ollama
 
+L'application de bureau (Windows, macOS, Linux) détecte Ollama **sans aucun réglage**. Pour la version web, Ollama doit autoriser la page : variable `OLLAMA_ORIGINS="*"` (voir ci-dessous). Le diagnostic (✦ IA → ⚙) indique si Ollama est détecté, bloqué, et quels modèles sont installés.
+
+
 ```bash
 # autoriser l'app web à appeler Ollama
 OLLAMA_ORIGINS="*" ollama serve
@@ -261,7 +264,7 @@ Puis, dans Nova PDF : panneau **✦ IA** → ⚙ → Moteur « Ollama ».
 | | | `M` `W` | Mesure / correcteur blanc |
 | `Ctrl+Z` / `Ctrl+Y` | Annuler / rétablir | `T` `N` | Texte / note |
 | `Ctrl +` / `Ctrl -` / `Ctrl 0` | Zoom / pleine largeur | `X` | Gomme |
-| `←` `→` `Début` `Fin` | Navigation | `F` / `Échap` | Concentration / quitter |
+| `←` `→` `Début` `Fin` | Navigation | `Ctrl+Maj+F` / `Échap` | Concentration / quitter |
 
 ---
 

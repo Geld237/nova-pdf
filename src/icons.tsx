@@ -3,7 +3,7 @@
  * dans l'esprit des icônes macOS / iOS.
  */
 import {
-  Archive, ArrowRightLeft, BookOpen, Bookmark, BookmarkPlus, ChevronLeft, Circle, ClipboardList, Combine, Copy, Crop,
+  Archive, ArrowRightLeft, ChevronRight, BookOpen, Bookmark, BookmarkPlus, ChevronLeft, Circle, ClipboardList, Combine, Copy, Crop,
   Droplets, Eraser, EyeOff, FileOutput, FilePlus2, FileSignature, FileText, FileType2, Files, FolderOpen,
   GalleryVertical, GitCompareArrows, GraduationCap, Hash, Highlighter, Image, ImageDown, Info, Languages, Layers,
   LayoutGrid, Library, ListOrdered, ListTree, Lock, LockOpen, Maximize, MessageSquareQuote, Mic, Minimize2, Minus,
@@ -39,7 +39,7 @@ export const Icons = {
   refs: Quote, archive: Archive,
   // menus contextuels
   copy: Copy, trash: Trash2, rotateCw: RotateCw, rotateCcw: RotateCcw, speak: Volume2, cite: MessageSquareQuote,
-  card: BookmarkPlus, back: ChevronLeft, close: X, palette: Palette, file: FileText, picture: Image, hash: Hash,
+  card: BookmarkPlus, back: ChevronLeft, next: ChevronRight, close: X, palette: Palette, file: FileText, picture: Image, hash: Hash,
   sign: FileSignature, swap: ArrowRightLeft, edit: SquarePen,
 } satisfies Record<string, LucideIcon>;
 
