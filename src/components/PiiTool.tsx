@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Section } from './ToolSection';
 import { chat, type AiSettings } from '../ai/llm';
 import { PII_LABELS, detectPii, type PiiHit, type PiiKind } from '../pii';
@@ -15,8 +15,10 @@ export function PiiTool({ ctx, ai }: { ctx: DocCtx; ai: AiSettings }) {
   const [hits, setHits] = useState<PiiHit[] | null>(null);
   const [keep, setKeep] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<string | null>(null);
+  const ctrl = useRef<AbortController | null>(null);
 
   const scan = async () => {
+    ctrl.current = new AbortController();
     setBusy('Analyse…');
     try {
       let terms = extra.split(/[,\n;]/).map((t) => t.trim()).filter(Boolean);
@@ -31,6 +33,8 @@ export function PiiTool({ ctx, ai }: { ctx: DocCtx; ai: AiSettings }) {
           ],
           () => {},
           () => {},
+          ctrl.current.signal,
+          'Détection des noms',
         ).catch(() => '');
         terms = [...terms, ...out.split('\n').map((l) => l.replace(/^[-*•\d.)\s]+/, '').trim()).filter((l) => l.length > 2 && l.length < 60)];
       }
@@ -93,6 +97,7 @@ export function PiiTool({ ctx, ai }: { ctx: DocCtx; ai: AiSettings }) {
         <input type="checkbox" checked={useAi} onChange={(e) => setUseAi(e.target.checked)} /> Trouver aussi les noms avec l'IA locale
       </label>
       <button className="primary" disabled={!!busy} onClick={scan}>{busy ?? 'Analyser le document'}</button>
+      {busy && <button className="stop-btn" onClick={() => ctrl.current?.abort()}>⏹ Arrêter l’IA</button>}
       {hits && (
         <>
           <p className="muted">{hits.length} élément(s) trouvé(s). Décochez ceux à conserver.</p>

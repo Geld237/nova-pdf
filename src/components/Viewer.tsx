@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import type { PDFDocumentProxy } from '../pdf/engine';
 import type { Annotation, ToolId } from '../types';
 import { PageView, type ToolOptions } from './PageView';
@@ -40,6 +40,20 @@ export const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(p, ref) {
     const el = scroller.current?.querySelector(`[data-page="${page}"]`) as HTMLElement | null;
     el?.scrollIntoView({ block: 'start' });
   }, []);
+
+  // Garde la même position de lecture quand le zoom change (ex. fermeture d'un panneau en « Largeur »)
+  const anchor = useRef(0);
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const on = () => (anchor.current = el.scrollHeight ? el.scrollTop / el.scrollHeight : 0);
+    el.addEventListener('scroll', on, { passive: true });
+    return () => el.removeEventListener('scroll', on);
+  }, []);
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (el && anchor.current) el.scrollTop = anchor.current * el.scrollHeight;
+  }, [p.scale]);
 
   useImperativeHandle(ref, () => ({
     scrollToPage,

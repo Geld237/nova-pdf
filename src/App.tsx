@@ -21,7 +21,7 @@ import { listSigRequests } from './pdf/sigreq';
 import { allDecks, dueCards } from './study';
 import type { CorpusDoc } from './components/AIPanel';
 import { SettingsPanel } from './components/SettingsPanel';
-import { DEFAULT_AI, type AiSettings } from './ai/llm';
+import { DEFAULT_AI, aiTasks, onAiTasks, stopAllAi, type AiSettings } from './ai/llm';
 import { makeDemoPdf } from './demo';
 import type { Annotation, OutlineItem, PageText, ToolId } from './types';
 import { Viewer, type ViewerHandle } from './components/Viewer';
@@ -34,6 +34,8 @@ import { ReadingPanel } from './components/ReadingPanel';
 import { SignatureModal } from './components/SignatureModal';
 import type { ToolOptions } from './components/PageView';
 import { Icon, type IconName } from './icons';
+import { ColorPicker } from './components/ColorPicker';
+import { TextStyleBar, type TextStyle } from './components/TextStyleBar';
 import { ContextMenu, type MenuItem, type MenuState } from './components/ContextMenu';
 import { Workspace, type WorkspaceKind } from './components/Workspace';
 import { DialogHost, ui } from './dialogs';
@@ -114,6 +116,12 @@ export default function App() {
     strokeWidth: 2,
     opacity: 1,
     fontSize: 14,
+    fontFamily: 'sans',
+    bold: false,
+    italic: false,
+    underline: false,
+    align: 'left',
+    textBg: null,
     fieldType: 'text',
     measureRatio: 1,
     measureUnit: 'cm',
@@ -121,6 +129,17 @@ export default function App() {
     image: null,
     signer: '',
   }));
+  const applyTextStyle = (st: TextStyle) =>
+    setOpts((o) => ({ ...o, color: st.color, fontSize: st.fontSize, fontFamily: st.fontFamily, bold: st.bold, italic: st.italic, underline: st.underline, align: st.align, textBg: st.bg }));
+  useEffect(() => {
+    const on = (e: Event) => applyTextStyle((e as CustomEvent).detail as TextStyle);
+    window.addEventListener('nova:text-style', on);
+    return () => window.removeEventListener('nova:text-style', on);
+  }, []);
+  // un texte jaune fluo serait illisible : avec l'outil Texte on part sur du noir
+  useEffect(() => {
+    if (tool === 'text') setOpts((o) => (['#ffeb3b', '#fff59d', '#8bc34a', '#4fc3f7', '#f48fb1'].includes(o.color.toLowerCase()) ? { ...o, color: '#1c1c1e' } : o));
+  }, [tool]);
   const [presenting, setPresenting] = useState(false);
   const [translating, setTranslating] = useState(false);
   const [scanning, setScanning] = useState(false);
@@ -135,7 +154,13 @@ export default function App() {
   const [sigModal, setSigModal] = useState(false);
   const [sidebar, setSidebar] = useState(true);
   const [sideTab, setSideTab] = useState<SideTab>('pages');
+  const closeSidePanels = () => {
+    setPanel(null);
+    setSidebar(false);
+  };
   const [panel, setPanel] = useState<Panel>(null);
+  const [aiRunning, setAiRunning] = useState<string[]>([]);
+  useEffect(() => onAiTasks(() => setAiRunning(aiTasks().map((t) => t.label))), []);
   const [page, setPage] = useState(0);
   const [query, setQuery] = useState('');
   const [toast, setToast] = useState<string | null>(null);
@@ -1050,11 +1075,18 @@ export default function App() {
                     aria-label={`Couleur ${c}`}
                   />
                 ))}
+                {tool !== 'text' && <ColorPicker value={opts.color} onChange={(c) => c && setOpts({ ...opts, color: c })} title="Carte des couleurs" />}
+                {['highlight', 'rect', 'ellipse', 'ink'].includes(tool) && (
+                  <input type="range" min={0.15} max={1} step={0.05} value={opts.opacity} onChange={(e) => setOpts({ ...opts, opacity: +e.target.value })} title={`Opacité ${Math.round(opts.opacity * 100)} %`} className="opacity-range" />
+                )}
                 {['ink', 'rect', 'ellipse', 'arrow'].includes(tool) && (
                   <input type="range" min={1} max={12} value={opts.strokeWidth} onChange={(e) => setOpts({ ...opts, strokeWidth: +e.target.value })} title="Épaisseur" />
                 )}
                 {tool === 'text' && (
-                  <input type="number" min={6} max={72} value={opts.fontSize} onChange={(e) => setOpts({ ...opts, fontSize: +e.target.value })} title="Taille du texte" />
+                  <TextStyleBar
+                    value={{ fontFamily: opts.fontFamily, fontSize: opts.fontSize, bold: opts.bold, italic: opts.italic, underline: opts.underline, align: opts.align, color: opts.color, bg: opts.textBg }}
+                    onChange={applyTextStyle}
+                  />
                 )}
                 {tool === 'measure' && (
                   <>
@@ -1210,16 +1242,17 @@ export default function App() {
                 className="viewer-host"
                 onContextMenu={onViewerMenu}
                 onPointerDown={(e) => {
-                  if (e.button === 0) pointerStart.current = [e.clientX, e.clientY];
+                  if (e.button === 0 || e.button === 2) pointerStart.current = [e.clientX, e.clientY];
                 }}
                 onPointerUp={(e) => {
                   const s0 = pointerStart.current;
                   pointerStart.current = null;
                   if (!s0 || Math.hypot(e.clientX - s0[0], e.clientY - s0[1]) > 4) return; // glissement / sélection
-                  if (window.getSelection()?.toString()) return;
-                  if (tool !== 'select' && tool !== 'hand') return; // un outil d'annotation est en cours
-                  // les panneaux « outils » se ferment ; ceux qu'on consulte en lisant (IA, notes, étude, lecture) restent
-                  if (panel && ['tools', 'form', 'settings', 'library', 'share'].includes(panel)) setPanel(null);
+                  if (window.getSelection()?.toString()) return; // une sélection est en cours : on la garde
+                  const t = e.target as HTMLElement;
+                  if (t.closest('input, textarea, select, [contenteditable], .text-edit-box, .ann-editor, .color-pop')) return;
+                  // clic gauche ou droit au milieu : on referme les panneaux latéraux (droite ET gauche)
+                  closeSidePanels();
                 }}
               >
               <Viewer
@@ -1368,6 +1401,12 @@ export default function App() {
       </main>
 
       <footer className="statusbar">
+        {aiRunning.length > 0 && (
+          <span className="sb-item ai-running">
+            <span className="spin" /> IA : {aiRunning.join(', ')}
+            <button className="stop-btn small" onClick={stopAllAi} title="Arrêter toutes les tâches d’IA">⏹ Arrêter</button>
+          </span>
+        )}
         {doc ? (
           <>
             <span className="sb-item" title={doc.name}>

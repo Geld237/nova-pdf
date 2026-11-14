@@ -67,6 +67,9 @@ export interface Annotation {
   bg?: string; // couleur de fond (texte modifié)
   fontFamily?: 'sans' | 'serif' | 'mono';
   bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  align?: 'left' | 'center' | 'right';
   original?: string; // texte d'origine remplacé
   createdAt: number;
 }

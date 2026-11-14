@@ -14,6 +14,9 @@ Logo chat, applications Windows (.exe/.msi), macOS (.dmg universel), Linux (AppI
 ## v0.4 — disponible ✅
 Bibliothèque (dossiers, étiquettes, recherche plein texte), IA multi-documents (comparaison de contrats, revue de littérature), fiches à répétition espacée et quiz, anonymisation automatique, profil de remplissage, traduction côte à côte, podcast, mode présentation avec laser, police dyslexie et règle de lecture, références BibTeX/RIS et aperçu au survol, scanner avec redressement, commandes vocales et dictée, raccourcis d'application, connexion pair-à-pair par QR (synchronisation, relecture en direct, demande de signature).
 
+## v0.8 — disponible ✅
+Bouton « Arrêter » fiable pour toutes les tâches d'IA (résumé, QCM, fiches, traduction, podcast, anonymisation) et arrêt global dans la barre d'état ; mise en forme du texte inséré (police, taille, gras, italique, souligné, alignement, couleur, fond) et modification d'un texte déjà posé ; carte des couleurs (palette, spectre, couleurs récentes, code hex, pipette) ; un clic gauche ou droit au milieu du document referme les panneaux de droite et de gauche.
+
 ## Prochaines idées 💡
 - [ ] **Widgets natifs** d'écran d'accueil (Android AppWidget, iOS WidgetKit) : derniers documents, fiches du jour
 - [ ] **Reconnaissance vocale 100 % locale** (Whisper en WebGPU)

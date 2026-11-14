@@ -14,6 +14,13 @@ import type { Annotation, Rect } from '../types';
 import { renderPageToCanvas, canvasToBlob, type PDFDocumentProxy } from './engine';
 import { removeTextInZones } from './contentEdit';
 
+const STD: Record<string, StandardFonts> = {
+  'sans-0-0': StandardFonts.Helvetica, 'sans-1-0': StandardFonts.HelveticaBold, 'sans-0-1': StandardFonts.HelveticaOblique, 'sans-1-1': StandardFonts.HelveticaBoldOblique,
+  'serif-0-0': StandardFonts.TimesRoman, 'serif-1-0': StandardFonts.TimesRomanBold, 'serif-0-1': StandardFonts.TimesRomanItalic, 'serif-1-1': StandardFonts.TimesRomanBoldItalic,
+  'mono-0-0': StandardFonts.Courier, 'mono-1-0': StandardFonts.CourierBold, 'mono-0-1': StandardFonts.CourierOblique, 'mono-1-1': StandardFonts.CourierBoldOblique,
+};
+const stdFontKey = (a: Annotation) => STD[`${a.fontFamily ?? 'sans'}-${a.bold ? 1 : 0}-${a.italic ? 1 : 0}`];
+
 export function hexToRgb(hex: string) {
   const h = hex.replace('#', '');
   const n = parseInt(h.length === 3 ? h.split('').map((c) => c + c).join('') : h, 16);
@@ -44,6 +51,12 @@ export async function applyAnnotations(
   if (!annotations.length) return bytes;
   const pdf = await PDFDocument.load(bytes, { ignoreEncryption: true });
   const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const fonts = new Map<StandardFonts, PDFFont>([[StandardFonts.Helvetica, font]]);
+  const fontFor = async (a: Annotation) => {
+    const k = stdFontKey(a);
+    if (!fonts.has(k)) fonts.set(k, await pdf.embedFont(k));
+    return fonts.get(k)!;
+  };
 
   const byPage = new Map<number, Annotation[]>();
   for (const a of annotations) {
@@ -178,12 +191,11 @@ export async function applyAnnotations(
         }
         case 'text': {
           const r = a.rect!;
-          const size = a.fontSize ?? 14;
-          const lines = sanitize(font, a.text ?? '').split('\n');
-          lines.forEach((line, i) => {
-            const [x, y] = conv(r.x, r.y + size * (i + 1));
-            page.drawText(line, { x, y: y + size * 0.2, size, font, color, opacity: a.opacity });
-          });
+          if (a.bg) {
+            const b = box({ x: r.x - 1.5, y: r.y, w: r.w + 3, h: r.h });
+            page.drawRectangle({ x: b.x, y: b.y, width: b.w, height: b.h, color: hexToRgb(a.bg), opacity: a.opacity });
+          }
+          drawStyled(page, a, await fontFor(a), conv, color, 0);
           break;
         }
         case 'image': {
@@ -217,14 +229,7 @@ export async function applyAnnotations(
         case 'textedit': {
           const b = box(a.rect!);
           page.drawRectangle({ x: b.x, y: b.y, width: b.w, height: b.h, color: hexToRgb(a.bg ?? '#ffffff') });
-          const fam = a.fontFamily ?? 'sans';
-          const key = fam === 'serif' ? (a.bold ? StandardFonts.TimesRomanBold : StandardFonts.TimesRoman) : fam === 'mono' ? (a.bold ? StandardFonts.CourierBold : StandardFonts.Courier) : a.bold ? StandardFonts.HelveticaBold : StandardFonts.Helvetica;
-          const f = await pdf.embedFont(key);
-          const size = a.fontSize ?? 12;
-          sanitize(f, a.text ?? '').split('\n').forEach((line, i) => {
-            const [x, y] = conv(a.rect!.x + 1.5, a.rect!.y + size * (0.95 + i * 1.2));
-            page.drawText(line, { x, y, size, font: f, color });
-          });
+          drawStyled(page, { ...a, opacity: 1 }, await fontFor(a), conv, color, 1.5);
           break;
         }
         case 'whiteout': {
@@ -270,4 +275,22 @@ export async function applyAnnotations(
     }
   }
   return pdf.save();
+}
+
+/** Écrit un texte multi-ligne avec alignement et soulignement (coordonnées d'affichage → PDF). */
+function drawStyled(page: PDFPage, a: Annotation, f: PDFFont, conv: Conv, color: ReturnType<typeof rgb>, pad: number) {
+  const r = a.rect!;
+  const size = a.fontSize ?? 12;
+  sanitize(f, a.text ?? '').split('\n').forEach((line, i) => {
+    const w = f.widthOfTextAtSize(line, size);
+    const lx = a.align === 'center' ? r.x + r.w / 2 - w / 2 : a.align === 'right' ? r.x + r.w - pad - w : r.x + pad;
+    const by = r.y + size * (0.95 + i * 1.2);
+    const [x, y] = conv(lx, by);
+    if (line) page.drawText(line, { x, y, size, font: f, color, opacity: a.opacity });
+    if (a.underline && line.trim()) {
+      const [ux1, uy1] = conv(lx, by + size * 0.12);
+      const [ux2, uy2] = conv(lx + w, by + size * 0.12);
+      page.drawLine({ start: { x: ux1, y: uy1 }, end: { x: ux2, y: uy2 }, thickness: Math.max(0.5, size / 16), color, opacity: a.opacity });
+    }
+  });
 }

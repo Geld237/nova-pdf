@@ -1,12 +1,19 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import { pdfjs, type PDFDocumentProxy } from '../pdf/engine';
 import type { Annotation, Rect, ToolId } from '../types';
+import { FONT_CSS, TextStyleBar, measureText, styleShortcut, type FontFam, type TextAlign, type TextStyle } from './TextStyleBar';
 
 export interface ToolOptions {
   color: string;
   strokeWidth: number;
   opacity: number;
   fontSize: number;
+  fontFamily: FontFam;
+  bold: boolean;
+  italic: boolean;
+  underline: boolean;
+  align: TextAlign;
+  textBg: string | null; // fond du texte inséré (null = transparent)
   fieldType: 'text' | 'checkbox' | 'signature';
   signer: string; // signataire attendu (demande de signature)
   measureRatio: number; // échelle 1:N (1 = taille réelle)
@@ -59,12 +66,12 @@ function PageViewImpl(p: Props) {
   const textRef = useRef<HTMLDivElement>(null);
   const [links, setLinks] = useState<LinkBox[]>([]);
   const [draft, setDraft] = useState<Annotation | null>(null);
-  const [editor, setEditor] = useState<{ x: number; y: number; kind: 'text' | 'note' } | null>(null);
+  const [editor, setEditor] = useState<{ x: number; y: number; kind: 'text' | 'note'; replaceId?: string } | null>(null);
   const [editorText, setEditorText] = useState('');
   const [preview, setPreview] = useState<{ x: number; y: number; page: number; url?: string } | null>(null);
   const [rendered, setRendered] = useState(false);
   const items = useRef<TextItem[]>([]);
-  const [textEdit, setTextEdit] = useState<{ rect: Rect; text: string; size: number; family: 'sans' | 'serif' | 'mono'; bold: boolean; color: string; bg: string; original: string; replaceId?: string } | null>(null);
+  const [textEdit, setTextEdit] = useState<{ rect: Rect; text: string; size: number; family: FontFam; bold: boolean; italic?: boolean; underline?: boolean; align?: TextAlign; color: string; bg: string; original: string; replaceId?: string } | null>(null);
   const [drag, setDrag] = useState<{ id: string; mode: 'move' | 'resize'; sx: number; sy: number; orig: Annotation; cur: Annotation } | null>(null);
   const [hoverBlock, setHoverBlock] = useState<Rect | null>(null);
   const [refTip, setRefTip] = useState<{ x: number; y: number; items: [number, string][] } | null>(null);
@@ -264,9 +271,28 @@ function PageViewImpl(p: Props) {
       return;
     }
     if (p.tool === 'text' || p.tool === 'note') {
+      e.preventDefault();
+      if (editor) {
+        // un clic à côté termine la saisie en cours (comme sur Mac)
+        commitEditor();
+        return;
+      }
+      if (p.tool === 'text') {
+        // clic sur un texte existant : on le rouvre pour le modifier
+        const prev = [...p.annotations].reverse().find((a) => a.kind === 'text' && a.rect && x >= a.rect.x - 3 && x <= a.rect.x + a.rect.w + 3 && y >= a.rect.y - 3 && y <= a.rect.y + a.rect.h + 3);
+        if (prev) {
+          window.dispatchEvent(
+            new CustomEvent('nova:text-style', {
+              detail: { color: prev.color, fontSize: prev.fontSize ?? 14, fontFamily: prev.fontFamily ?? 'sans', bold: !!prev.bold, italic: !!prev.italic, underline: !!prev.underline, align: prev.align ?? 'left', bg: prev.bg ?? null } satisfies TextStyle,
+            }),
+          );
+          setEditor({ x: prev.rect!.x, y: prev.rect!.y, kind: 'text', replaceId: prev.id });
+          setEditorText(prev.text ?? '');
+          return;
+        }
+      }
       setEditor({ x, y, kind: p.tool });
       setEditorText('');
-      e.preventDefault();
       return;
     }
     if (p.tool === 'signature' || p.tool === 'stamp' || p.tool === 'image') {
@@ -403,7 +429,7 @@ function PageViewImpl(p: Props) {
     // retoucher un remplacement déjà fait
     const prev = p.annotations.find((a) => a.kind === 'textedit' && a.rect && x >= a.rect.x && x <= a.rect.x + a.rect.w && y >= a.rect.y && y <= a.rect.y + a.rect.h);
     if (prev) {
-      setTextEdit({ rect: prev.rect!, text: prev.text ?? '', size: prev.fontSize ?? 12, family: prev.fontFamily ?? 'sans', bold: !!prev.bold, color: prev.color, bg: prev.bg ?? '#ffffff', original: prev.original ?? '', replaceId: prev.id });
+      setTextEdit({ rect: prev.rect!, text: prev.text ?? '', size: prev.fontSize ?? 12, family: prev.fontFamily ?? 'sans', bold: !!prev.bold, italic: !!prev.italic, underline: !!prev.underline, align: prev.align ?? 'left', color: prev.color, bg: prev.bg ?? '#ffffff', original: prev.original ?? '', replaceId: prev.id });
       return;
     }
     const blk = blockAt(x, y);
@@ -430,6 +456,9 @@ function PageViewImpl(p: Props) {
         fontSize: textEdit.size,
         fontFamily: textEdit.family,
         bold: textEdit.bold,
+        italic: textEdit.italic,
+        underline: textEdit.underline,
+        align: textEdit.align,
         color: textEdit.color,
         bg: textEdit.bg,
         opacity: 1,
@@ -441,22 +470,35 @@ function PageViewImpl(p: Props) {
   };
 
   const commitEditor = () => {
-    if (editor && editorText.trim()) {
-      const size = p.opts.fontSize;
-      p.onAdd({
-        ...base(),
-        kind: editor.kind,
-        rect:
-          editor.kind === 'text'
-            ? { x: editor.x, y: editor.y, w: 200, h: size * 1.3 * editorText.split('\n').length }
-            : { x: editor.x, y: editor.y, w: 20, h: 20 },
-        text: editorText,
-        fontSize: size,
-        opacity: 1,
-      });
+    if (!editor) return;
+    if (editor.replaceId && !editorText.trim()) p.onDelete(editor.replaceId);
+    else if (editorText.trim()) {
+      const o = p.opts;
+      const size = o.fontSize;
+      const ann: Annotation =
+        editor.kind === 'text'
+          ? {
+              ...base(),
+              id: editor.replaceId ?? base().id,
+              kind: 'text',
+              rect: { x: editor.x, y: editor.y, w: measureText(editorText, o) + 2, h: size * 1.2 * editorText.split('\n').length },
+              text: editorText,
+              fontSize: size,
+              fontFamily: o.fontFamily,
+              bold: o.bold,
+              italic: o.italic,
+              underline: o.underline,
+              align: o.align,
+              bg: o.textBg ?? undefined,
+              opacity: 1,
+            }
+          : { ...base(), kind: 'note', rect: { x: editor.x, y: editor.y, w: 20, h: 20 }, text: editorText, opacity: 1 };
+      if (editor.replaceId) p.onUpdate(ann);
+      else p.onAdd(ann);
     }
     setEditor(null);
   };
+  const editorStyle: TextStyle = { fontFamily: p.opts.fontFamily, fontSize: p.opts.fontSize, bold: p.opts.bold, italic: p.opts.italic, underline: p.opts.underline, align: p.opts.align, color: p.opts.color, bg: p.opts.textBg };
 
   const navigateDest = async (dest: unknown, hoverOnly: boolean, ev?: React.MouseEvent) => {
     try {
@@ -552,15 +594,11 @@ function PageViewImpl(p: Props) {
       {textEdit && (
         <div className="text-edit-box" style={{ left: textEdit.rect.x * p.scale, top: (textEdit.rect.y - 34 / p.scale) * p.scale }} onClick={(e) => e.stopPropagation()}>
           <div className="text-edit-bar">
-            <select value={textEdit.family} onChange={(e) => setTextEdit({ ...textEdit, family: e.target.value as 'sans' | 'serif' | 'mono' })}>
-              <option value="sans">Sans empattement</option>
-              <option value="serif">Avec empattement</option>
-              <option value="mono">Chasse fixe</option>
-            </select>
-            <input type="number" min={4} max={96} step={0.5} value={textEdit.size} onChange={(e) => setTextEdit({ ...textEdit, size: +e.target.value })} title="Taille" />
-            <button className={textEdit.bold ? 'active' : ''} onClick={() => setTextEdit({ ...textEdit, bold: !textEdit.bold })} title="Gras"><b>G</b></button>
-            <input type="color" value={textEdit.color} onChange={(e) => setTextEdit({ ...textEdit, color: e.target.value })} title="Couleur du texte" />
-            <input type="color" value={textEdit.bg} onChange={(e) => setTextEdit({ ...textEdit, bg: e.target.value })} title="Couleur du fond" />
+            <TextStyleBar
+              bgOptional={false}
+              value={{ fontFamily: textEdit.family, fontSize: textEdit.size, bold: textEdit.bold, italic: !!textEdit.italic, underline: !!textEdit.underline, align: textEdit.align ?? 'left', color: textEdit.color, bg: textEdit.bg }}
+              onChange={(st) => setTextEdit({ ...textEdit, family: st.fontFamily, size: st.fontSize, bold: st.bold, italic: st.italic, underline: st.underline, align: st.align, color: st.color, bg: st.bg ?? '#ffffff' })}
+            />
             <button className="primary" onClick={commitTextEdit}>OK</button>
             <button onClick={() => setTextEdit(null)}>Annuler</button>
           </div>
@@ -570,6 +608,8 @@ function PageViewImpl(p: Props) {
             value={textEdit.text}
             onChange={(e) => setTextEdit({ ...textEdit, text: e.target.value })}
             onKeyDown={(e) => {
+              const st: TextStyle = { fontFamily: textEdit.family, fontSize: textEdit.size, bold: textEdit.bold, italic: !!textEdit.italic, underline: !!textEdit.underline, align: textEdit.align ?? 'left', color: textEdit.color, bg: textEdit.bg };
+              if (styleShortcut(e, st, (n) => setTextEdit({ ...textEdit, bold: n.bold, italic: n.italic, underline: n.underline }))) return;
               if (e.key === 'Escape') setTextEdit(null);
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
@@ -582,6 +622,9 @@ function PageViewImpl(p: Props) {
               fontSize: textEdit.size * p.scale,
               fontFamily: FONT_CSS[textEdit.family],
               fontWeight: textEdit.bold ? 700 : 400,
+              fontStyle: textEdit.italic ? 'italic' : 'normal',
+              textDecoration: textEdit.underline ? 'underline' : 'none',
+              textAlign: textEdit.align ?? 'left',
               color: textEdit.color,
               background: textEdit.bg,
             }}
@@ -595,14 +638,31 @@ function PageViewImpl(p: Props) {
           style={{
             left: editor.x * p.scale,
             top: editor.y * p.scale,
-            fontSize: (editor.kind === 'text' ? p.opts.fontSize : 13) * (editor.kind === 'text' ? p.scale : 1),
-            color: editor.kind === 'text' ? p.opts.color : undefined,
+            ...(editor.kind === 'text'
+              ? {
+                  fontSize: p.opts.fontSize * p.scale,
+                  color: p.opts.color,
+                  fontFamily: FONT_CSS[p.opts.fontFamily],
+                  fontWeight: p.opts.bold ? 700 : 400,
+                  fontStyle: p.opts.italic ? 'italic' : 'normal',
+                  textDecoration: p.opts.underline ? 'underline' : 'none',
+                  textAlign: p.opts.align,
+                  background: p.opts.textBg ?? undefined,
+                  lineHeight: 1.2,
+                }
+              : { fontSize: 13 }),
           }}
           placeholder={editor.kind === 'note' ? 'Votre note… (Ctrl+Entrée)' : 'Texte… (Ctrl+Entrée)'}
           value={editorText}
           onChange={(e) => setEditorText(e.target.value)}
-          onBlur={commitEditor}
+          onBlur={(e) => {
+            // passer à la barre de mise en forme ne termine pas la saisie
+            const to = e.relatedTarget as HTMLElement | null;
+            if (to?.closest('.tool-opts, .text-style-bar, .color-pop')) return;
+            commitEditor();
+          }}
           onKeyDown={(e) => {
+            if (editor.kind === 'text' && styleShortcut(e, editorStyle, (st) => window.dispatchEvent(new CustomEvent('nova:text-style', { detail: st })))) return;
             if (e.key === 'Escape') setEditor(null);
             if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) commitEditor();
           }}
@@ -696,16 +756,34 @@ function AnnShape({ a, eraser, onDelete }: { a: Annotation; eraser: boolean; onD
         </g>
       );
     }
-    case 'text':
+    case 'text': {
+      const r = a.rect!;
+      const fs = a.fontSize ?? 14;
+      const ax = a.align === 'center' ? r.x + r.w / 2 : a.align === 'right' ? r.x + r.w : r.x;
       return (
-        <text {...common} x={a.rect!.x} y={a.rect!.y} fill={a.color} fontSize={a.fontSize} fontFamily="Helvetica, Arial, sans-serif" opacity={a.opacity}>
-          {a.text?.split('\n').map((l, i) => (
-            <tspan key={i} x={a.rect!.x} dy={a.fontSize! * (i === 0 ? 1 : 1.2)}>
-              {l}
-            </tspan>
-          ))}
-        </text>
+        <g {...common} opacity={a.opacity}>
+          {a.bg && <rect x={r.x - 1.5} y={r.y} width={r.w + 3} height={r.h} fill={a.bg} rx={1} />}
+          <text
+            x={ax}
+            y={r.y}
+            fill={a.color}
+            fontSize={fs}
+            fontFamily={FONT_CSS[a.fontFamily ?? 'sans']}
+            fontWeight={a.bold ? 700 : 400}
+            fontStyle={a.italic ? 'italic' : 'normal'}
+            textDecoration={a.underline ? 'underline' : undefined}
+            textAnchor={a.align === 'center' ? 'middle' : a.align === 'right' ? 'end' : 'start'}
+          >
+            {a.text?.split('\n').map((l, i) => (
+              <tspan key={i} x={ax} dy={fs * (i === 0 ? 0.95 : 1.2)}>
+                {l || ' '}
+              </tspan>
+            ))}
+          </text>
+          <rect x={r.x} y={r.y} width={r.w} height={r.h} fill="transparent" />
+        </g>
       );
+    }
     case 'note':
       return (
         <g {...common} transform={`translate(${a.rect!.x} ${a.rect!.y})`} style={{ pointerEvents: 'visiblePainted', cursor: 'help' }}>
@@ -720,11 +798,27 @@ function AnnShape({ a, eraser, onDelete }: { a: Annotation; eraser: boolean; onD
       return (
         <g {...common}>
           <rect x={a.rect!.x} y={a.rect!.y} width={a.rect!.w} height={a.rect!.h} fill={a.bg ?? '#fff'} />
-          <text x={a.rect!.x + 1.5} y={a.rect!.y} fill={a.color} fontSize={a.fontSize} fontFamily={FONT_CSS[a.fontFamily ?? 'sans']} fontWeight={a.bold ? 700 : 400}>
-            {a.text?.split('\n').map((l, i) => (
-              <tspan key={i} x={a.rect!.x + 1.5} dy={a.fontSize! * (i === 0 ? 0.95 : 1.2)}>{l}</tspan>
-            ))}
-          </text>
+          {(() => {
+            const r = a.rect!;
+            const ax = a.align === 'center' ? r.x + r.w / 2 : a.align === 'right' ? r.x + r.w - 1.5 : r.x + 1.5;
+            return (
+              <text
+                x={ax}
+                y={r.y}
+                fill={a.color}
+                fontSize={a.fontSize}
+                fontFamily={FONT_CSS[a.fontFamily ?? 'sans']}
+                fontWeight={a.bold ? 700 : 400}
+                fontStyle={a.italic ? 'italic' : 'normal'}
+                textDecoration={a.underline ? 'underline' : undefined}
+                textAnchor={a.align === 'center' ? 'middle' : a.align === 'right' ? 'end' : 'start'}
+              >
+                {a.text?.split('\n').map((l, i) => (
+                  <tspan key={i} x={ax} dy={a.fontSize! * (i === 0 ? 0.95 : 1.2)}>{l}</tspan>
+                ))}
+              </text>
+            );
+          })()}
           <title>Texte modifié — d'origine : « {a.original} »</title>
         </g>
       );
@@ -789,7 +883,6 @@ function LinkPreview({ doc, page, x, y }: { doc: PDFDocumentProxy; page: number;
   );
 }
 
-const FONT_CSS = { sans: 'Helvetica, Arial, sans-serif', serif: '"Times New Roman", Times, serif', mono: '"Courier New", Courier, monospace' };
 
 function bboxOf(a: Annotation): Rect | null {
   if (a.rect) return a.rect;

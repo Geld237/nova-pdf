@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { get, set } from 'idb-keyval';
-import { chat, type AiSettings } from '../ai/llm';
+import { AbortedError, chat, type AiSettings } from '../ai/llm';
 import type { PDFDocumentProxy } from '../pdf/engine';
 import { textToPdf, toDocx } from '../pdf/advanced';
 import { baseName, download } from '../pdf/tools';
@@ -27,6 +27,7 @@ export function TranslateView({
   const [status, setStatus] = useState('');
   const [error, setError] = useState<string | null>(null);
   const stop = useRef(false);
+  const ctrl = useRef<AbortController | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const key = `tr:${fingerprint}:${lang}`;
 
@@ -56,6 +57,8 @@ export function TranslateView({
         setTr((x) => ({ ...x, [i]: out }));
       },
       (txt) => setStatus(txt),
+      ctrl.current?.signal,
+      'Traduction',
     );
     const next = { ...acc, [i]: out.trim() };
     await set(key, next).catch(() => {});
@@ -66,6 +69,7 @@ export function TranslateView({
     setRunning(true);
     setError(null);
     stop.current = false;
+    ctrl.current = new AbortController();
     let acc = { ...tr };
     try {
       for (let i = from; i < texts.length; i++) {
@@ -76,7 +80,8 @@ export function TranslateView({
         acc = await translatePage(i, acc);
       }
     } catch (e) {
-      setError((e as Error).message);
+      if (e instanceof AbortedError) setTr((t) => Object.fromEntries(Object.entries(t).filter(([, v]) => v !== '…')));
+      else setError((e as Error).message);
     } finally {
       setRunning(false);
       setStatus('');
@@ -94,7 +99,7 @@ export function TranslateView({
           {LANGS.map((l) => <option key={l}>{l}</option>)}
         </select>
         {running ? (
-          <button onClick={() => (stop.current = true)}>⏹ Arrêter</button>
+          <button className="stop-btn" onClick={() => { stop.current = true; ctrl.current?.abort(); }}>⏹ Arrêter</button>
         ) : (
           <button className="primary" onClick={() => runAll(0)}>{done ? 'Continuer la traduction' : 'Traduire tout le document'}</button>
         )}

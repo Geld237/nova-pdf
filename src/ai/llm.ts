@@ -208,7 +208,7 @@ async function cpuChat(settings: AiSettings, messages: ChatMessage[], onToken: (
   onProgress('Lecture du texte par le processeur… (plus lent que la carte graphique)', 0.99);
   let full = '';
   let first = true;
-  const stream = await w.createChatCompletion({ messages, stream: true, max_tokens: 900, temperature: 0.3 });
+  const stream = await w.createChatCompletion({ messages, stream: true, max_tokens: 900, temperature: 0.3, abortSignal: signal });
   for await (const chunk of stream) {
     if (first) {
       onProgress('', 1);
@@ -268,7 +268,70 @@ let engineLabel = '';
 /** Moteur réellement utilisé pour la dernière réponse (affiché sous la zone de saisie). */
 export const lastEngine = () => engineLabel;
 
+/* ----- Tâches en cours : arrêt immédiat, y compris pendant le chargement -------- */
+
+export class AbortedError extends Error {
+  constructor() {
+    super('Arrêté.');
+    this.name = 'AbortedError';
+  }
+}
+const running = new Map<number, { label: string; ctrl: AbortController; started: number }>();
+const listeners = new Set<() => void>();
+let seq = 0;
+const emitTasks = () => listeners.forEach((l) => l());
+export const onAiTasks = (l: () => void) => {
+  listeners.add(l);
+  return () => {
+    listeners.delete(l);
+  };
+};
+export const aiTasks = () => [...running.values()];
+/** Arrête toutes les tâches d'IA en cours. */
+export function stopAllAi() {
+  for (const t of running.values()) t.ctrl.abort();
+  engine?.interruptGenerate?.();
+}
+
+/**
+ * Lance une génération. Le signal (bouton « Arrêter ») interrompt immédiatement :
+ * la promesse est rejetée avec AbortedError, même si le modèle est encore en chargement.
+ */
 export async function chat(
+  settings: AiSettings,
+  messages: ChatMessage[],
+  onToken: (t: string) => void,
+  onProgress: (text: string, ratio: number) => void,
+  signal?: AbortSignal,
+  label = 'Assistant IA',
+): Promise<string> {
+  const ctrl = new AbortController();
+  const id = ++seq;
+  if (signal) {
+    if (signal.aborted) ctrl.abort();
+    else signal.addEventListener('abort', () => ctrl.abort(), { once: true });
+  }
+  running.set(id, { label, ctrl, started: Date.now() });
+  emitTasks();
+  let stopped = false;
+  const onAbort = () => {
+    stopped = true;
+    engine?.interruptGenerate?.();
+  };
+  ctrl.signal.addEventListener('abort', onAbort, { once: true });
+  const aborted = new Promise<never>((_, rej) => ctrl.signal.addEventListener('abort', () => rej(new AbortedError()), { once: true }));
+  aborted.catch(() => {});
+  const inner = chatInner(settings, messages, (t) => !stopped && onToken(t), (t, r) => !stopped && onProgress(t, r), ctrl.signal);
+  inner.catch(() => {});
+  try {
+    return await Promise.race([inner, aborted]);
+  } finally {
+    running.delete(id);
+    emitTasks();
+  }
+}
+
+async function chatInner(
   settings: AiSettings,
   messages: ChatMessage[],
   onToken: (t: string) => void,

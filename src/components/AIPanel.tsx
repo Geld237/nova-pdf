@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { aiDiagnostics, chat, lastEngine, customCpuModelName, gpuMarkedBroken, listOllamaModels, resetGpuFlag, setCustomCpuModel, CPU_MODELS, WEBLLM_MODELS, webGpuAvailable, type AiSettings, type ChatMessage } from '../ai/llm';
+import { AbortedError, aiDiagnostics, chat, lastEngine, customCpuModelName, gpuMarkedBroken, listOllamaModels, resetGpuFlag, setCustomCpuModel, CPU_MODELS, WEBLLM_MODELS, webGpuAvailable, type AiSettings, type ChatMessage } from '../ai/llm';
 import { Bm25Index, chunkPages, type Chunk } from '../ai/retrieval';
 import { saveSetting } from '../memory';
 import type { Annotation, PageText } from '../types';
@@ -52,6 +52,12 @@ export function AIPanel(p: Props) {
   }, [showSettings, p.settings.ollamaUrl]);
   const abort = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const stopped = useRef(false);
+  const stop = () => {
+    stopped.current = true;
+    abort.current?.abort();
+    setProgress(null);
+  };
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
@@ -89,6 +95,7 @@ export function AIPanel(p: Props) {
 
   /** Lance un appel au modèle et affiche la réponse en streaming. */
   const run = async (userLabel: string, messages: ChatMessage[], silentUser = false): Promise<string> => {
+    if (stopped.current) return '';
     setError(null);
     setBusy(true);
     abort.current = new AbortController();
@@ -106,12 +113,22 @@ export function AIPanel(p: Props) {
           }),
         (text, ratio) => setProgress(ratio >= 1 ? null : { text, ratio }),
         abort.current.signal,
+        userLabel,
       );
       setProgress(null);
       return out;
     } catch (e) {
-      setMsgs((m) => (m[m.length - 1]?.content === '' ? m.slice(0, -1) : m));
-      setError((e as Error).message);
+      if (e instanceof AbortedError || stopped.current) {
+        stopped.current = true;
+        setMsgs((m) => {
+          const last = m[m.length - 1];
+          if (last?.role !== 'assistant') return m;
+          return last.content ? [...m.slice(0, -1), { ...last, content: `${last.content} … (arrêté)` }] : m.slice(0, -1);
+        });
+      } else {
+        setMsgs((m) => (m[m.length - 1]?.content === '' ? m.slice(0, -1) : m));
+        setError((e as Error).message);
+      }
       setProgress(null);
       return '';
     } finally {
@@ -122,6 +139,7 @@ export function AIPanel(p: Props) {
   const pagesText = (pages: PageText[]) => pages.map((t) => `[p. ${t.page + 1}]\n${t.text}`).join('\n\n');
 
   const summarizeDoc = async () => {
+    stopped.current = false;
     if (!p.texts) return;
     if (totalChars <= BUDGET) {
       await run('Résume ce document', [
@@ -165,6 +183,7 @@ export function AIPanel(p: Props) {
   };
 
   const pageAction = (instruction: string, label: string) => {
+    stopped.current = false;
     const t = p.texts?.[p.currentPage];
     if (!t?.text) {
       setError("Cette page n'a pas de texte extractible (scan ?). Lancez l'OCR dans Outils.");
@@ -177,6 +196,7 @@ export function AIPanel(p: Props) {
   };
 
   const explainSelection = () => {
+    stopped.current = false;
     const sel = window.getSelection()?.toString().trim();
     if (!sel) {
       setError('Sélectionnez d’abord un passage dans le document.');
@@ -193,6 +213,7 @@ export function AIPanel(p: Props) {
   useEffect(() => {
     const h = (e: Event) => {
       const d = (e as CustomEvent).detail as { action: 'explain' | 'translate' | 'ask'; text: string };
+      stopped.current = false;
       setScope('doc');
       if (d.action === 'explain') {
         const ctx = p.texts?.[p.currentPage]?.text.slice(0, 3000) ?? '';
@@ -213,6 +234,7 @@ export function AIPanel(p: Props) {
   }, [p.texts, p.currentPage, p.settings]);
 
   const flashcards = () => {
+    stopped.current = false;
     const hl = p.annotations.filter((a) => a.text && (a.kind === 'highlight' || a.kind === 'note'));
     const source = hl.length
       ? hl.map((a) => `[p. ${a.page + 1}] ${a.text}`).join('\n')
@@ -250,6 +272,7 @@ export function AIPanel(p: Props) {
 
   /** Analyse document par document puis synthèse (comparaison de contrats, revue de littérature). */
   const crossAnalysis = async (kind: 'contracts' | 'review') => {
+    stopped.current = false;
     if (active.length < 2) {
       setError('Sélectionnez au moins deux documents.');
       return;
@@ -288,6 +311,7 @@ export function AIPanel(p: Props) {
   };
 
   const ask = async (override?: string) => {
+    stopped.current = false;
     const q = (override ?? input).trim();
     if (scope !== 'doc') {
       if (!q) return;
@@ -496,10 +520,13 @@ export function AIPanel(p: Props) {
         </span>
       </div>
 
-      {progress && (
-        <div className="progress">
-          <div className="bar" style={{ width: `${Math.round(progress.ratio * 100)}%` }} />
-          <small>{progress.text}</small>
+      {(progress || busy) && (
+        <div className="busy-row">
+          <div className="progress">
+            <div className="bar" style={{ width: `${Math.round((progress?.ratio ?? 0) * 100)}%` }} />
+            <small>{progress?.text || 'Réflexion en cours…'}</small>
+          </div>
+          <button className="stop-btn" onClick={stop} title="Arrêter">⏹ Arrêter</button>
         </div>
       )}
       {error && <p className="error">{error}</p>}
@@ -560,7 +587,7 @@ export function AIPanel(p: Props) {
             }}
           />
           {busy ? (
-            <button type="button" className="send stop" onClick={() => abort.current?.abort()} title="Arrêter">
+            <button type="button" className="send stop" onClick={stop} title="Arrêter">
               <span className="stop-square" />
             </button>
           ) : (

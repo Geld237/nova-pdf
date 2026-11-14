@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { chat, type AiSettings } from '../ai/llm';
+import { AbortedError, chat, type AiSettings } from '../ai/llm';
 import {
   allDecks, dueCards, loadDeck, newCard, nextIntervalLabel, parseCards, parseQuiz, quizFromCards, saveDeck, schedule,
   type Card, type Deck, type Grade, type QuizQuestion,
@@ -44,9 +44,9 @@ export function StudyPanel(p: Props) {
     setError(null);
     abort.current = new AbortController();
     try {
-      return await chat(p.ai, [{ role: 'system', content: SYS }, { role: 'user', content: prompt }], () => {}, (t) => setBusy(`${label} — ${t.slice(0, 60)}`), abort.current.signal);
+      return await chat(p.ai, [{ role: 'system', content: SYS }, { role: 'user', content: prompt }], () => {}, (t) => setBusy(`${label} — ${t.slice(0, 60)}`), abort.current.signal, label);
     } catch (e) {
-      setError((e as Error).message);
+      if (!(e instanceof AbortedError)) setError((e as Error).message);
       return '';
     } finally {
       setBusy(null);
@@ -138,7 +138,7 @@ export function StudyPanel(p: Props) {
       </div>
       {busy && (
         <p className="busy">
-          ⏳ {busy} <button className="link" onClick={() => abort.current?.abort()}>arrêter</button>
+          ⏳ {busy} <button className="stop-btn" onClick={() => abort.current?.abort()}>⏹ Arrêter</button>
         </p>
       )}
       {error && <p className="error">{error}</p>}

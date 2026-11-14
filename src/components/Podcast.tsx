@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { chat, type AiSettings } from '../ai/llm';
+import { AbortedError, chat, type AiSettings } from '../ai/llm';
 import type { PageText } from '../types';
 
 interface Line {
@@ -20,6 +20,7 @@ export function Podcast({ texts, ai, docName, onToNotes }: { texts: PageText[] |
   const [length, setLength] = useState<'court' | 'moyen' | 'long'>('moyen');
   const tts = typeof window !== 'undefined' && 'speechSynthesis' in window;
   const stopped = useRef(false);
+  const genAbort = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (!tts) return;
@@ -40,6 +41,7 @@ export function Podcast({ texts, ai, docName, onToNotes }: { texts: PageText[] |
 
   const generate = async () => {
     if (!texts) return;
+    genAbort.current = new AbortController();
     setBusy('Écriture du script…');
     setError(null);
     const step = Math.max(1, Math.ceil(texts.length / 10));
@@ -57,6 +59,8 @@ export function Podcast({ texts, ai, docName, onToNotes }: { texts: PageText[] |
         ],
         () => {},
         (t) => setBusy(`Chargement du modèle… ${t.slice(0, 40)}`),
+        genAbort.current.signal,
+        'Podcast',
       );
       const ls: Line[] = out
         .split('\n')
@@ -69,7 +73,7 @@ export function Podcast({ texts, ai, docName, onToNotes }: { texts: PageText[] |
       if (!ls.length) setError('Le modèle n’a pas produit de dialogue lisible. Réessayez.');
       setLines(ls);
     } catch (e) {
-      setError((e as Error).message);
+      if (!(e instanceof AbortedError)) setError((e as Error).message);
     } finally {
       setBusy(null);
     }
@@ -109,6 +113,7 @@ export function Podcast({ texts, ai, docName, onToNotes }: { texts: PageText[] |
           <option value="long">Long (~10 min)</option>
         </select>
         <button className="primary" disabled={!!busy || !texts} onClick={generate}>{busy ?? (lines.length ? 'Régénérer' : 'Créer le podcast')}</button>
+        {busy && <button className="stop-btn" onClick={() => genAbort.current?.abort()}>⏹ Arrêter</button>}
       </div>
       {error && <p className="error">{error}</p>}
       {lines.length > 0 && (
