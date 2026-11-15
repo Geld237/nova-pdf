@@ -1,3 +1,5 @@
+import { ColorPicker } from './ColorPicker';
+import { customFonts, onFontsChange, removeFont } from '../fonts';
 import { useEffect, useState } from 'react';
 import { ui } from '../dialogs';
 import type { PDFDocumentProxy } from '../pdf/engine';
@@ -73,8 +75,31 @@ export function SettingsPanel({ doc, settings, setSettings, notify }: Props) {
               <option value="system">Comme le système</option>
               <option value="light">Clair</option>
               <option value="dark">Sombre</option>
+              <option value="sepia">Sépia (lecture douce)</option>
+              <option value="contrast">Contraste élevé</option>
             </select>
           </label>
+          {settings.theme === 'sepia' && (
+            <label className="check">
+              <input type="checkbox" checked={settings.sepiaPages !== false} onChange={(e) => set('sepiaPages', e.target.checked)} /> Teinter aussi les pages
+            </label>
+          )}
+          <FontsManager />
+          <div className="accent-row">
+            <span>Couleur d'accent</span>
+            <div className="accent-swatches">
+              {[null, '#007aff', '#5856d6', '#af52de', '#ff2d55', '#ff9500', '#34c759', '#00a0a0', '#8e8e93'].map((c) => (
+                <button
+                  key={c ?? 'auto'}
+                  className={`acc ${settings.accent === c ? 'active' : ''}`}
+                  style={{ background: c ?? 'conic-gradient(#3d52d5 0 50%, #7c8cff 0)' }}
+                  title={c ?? 'Automatique (selon le thème)'}
+                  onClick={() => set('accent', c)}
+                />
+              ))}
+              <ColorPicker value={settings.accent} onChange={(c) => set('accent', c)} title="Autre couleur d'accent" />
+            </div>
+          </div>
           <label>
             Zoom à l'ouverture
             <select value={settings.defaultFit} onChange={(e) => set('defaultFit', e.target.value as AppSettings['defaultFit'])}>
@@ -449,6 +474,23 @@ function About() {
       </p>
       <p className="muted">Licence MIT. Construit avec pdf.js (Apache-2.0), pdf-lib (MIT), @cantoo/pdf-lib (MIT), Tesseract.js (Apache-2.0), WebLLM (Apache-2.0), docx (MIT), React (MIT).</p>
       <p className="muted">Aucune télémétrie, aucun compte, aucun serveur.</p>
+    </div>
+  );
+}
+
+function FontsManager() {
+  const [list, setList] = useState(customFonts());
+  useEffect(() => onFontsChange(() => setList([...customFonts()])), []);
+  if (!list.length) return null;
+  return (
+    <div className="accent-row">
+      <span>Mes polices</span>
+      {list.map((f) => (
+        <div key={f.id} className="font-item">
+          <span style={{ fontFamily: `"nova-${f.id.slice(7)}"` }}>{f.name}</span>
+          <button className="link" onClick={() => removeFont(f.id)}>Retirer</button>
+        </div>
+      ))}
     </div>
   );
 }

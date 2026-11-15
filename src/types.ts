@@ -19,7 +19,8 @@ export type ToolId =
   | 'edittext'
   | 'image'
   | 'move'
-  | 'eraser';
+  | 'eraser'
+  | 'snapshot';
 
 export type AnnKind =
   | 'highlight'
@@ -65,7 +66,7 @@ export interface Annotation {
   fieldType?: 'text' | 'checkbox' | 'signature'; // champ de formulaire à créer
   fieldName?: string;
   bg?: string; // couleur de fond (texte modifié)
-  fontFamily?: 'sans' | 'serif' | 'mono';
+  fontFamily?: string; // 'sans' | 'serif' | 'mono' | 'custom:…'
   bold?: boolean;
   italic?: boolean;
   underline?: boolean;

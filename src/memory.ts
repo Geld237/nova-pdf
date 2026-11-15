@@ -168,7 +168,11 @@ export async function clearAllData() {
 /* ----- Paramètres de l'application ---------------------------------------- */
 
 export interface AppSettings {
-  theme: 'system' | 'light' | 'dark';
+  theme: 'system' | 'light' | 'dark' | 'sepia' | 'contrast';
+  /** couleur d'accent personnalisée (null = celle du thème) */
+  accent: string | null;
+  /** teinter aussi les pages en sépia */
+  sepiaPages: boolean;
   defaultFit: 'width' | 'page' | 'actual';
   highlightColor: string;
   resumeLastPage: boolean;
@@ -183,6 +187,8 @@ export interface AppSettings {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   theme: 'system',
+  accent: null,
+  sepiaPages: true,
   defaultFit: 'width',
   highlightColor: '#ffeb3b',
   resumeLastPage: true,

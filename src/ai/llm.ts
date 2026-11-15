@@ -235,7 +235,7 @@ function frenchProgress(t: string) {
  * Requêtes vers Ollama. Dans l'application de bureau, elles passent par la partie native
  * (pas de restriction CORS : sous Windows, l'origine « http://tauri.localhost » est refusée par Ollama).
  */
-async function ollamaFetch(url: string, init?: RequestInit): Promise<Response> {
+export async function ollamaFetch(url: string, init?: RequestInit): Promise<Response> {
   const { isTauri } = await import('../platform');
   if (isTauri) {
     const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
@@ -276,7 +276,11 @@ export class AbortedError extends Error {
     this.name = 'AbortedError';
   }
 }
-const running = new Map<number, { label: string; ctrl: AbortController; started: number }>();
+const running = new Map<number, { label: string; ctrl: AbortController; started: number; waiting: boolean }>();
+/** file d'attente : une seule génération à la fois (indispensable sur une petite carte graphique) */
+let lane: Promise<void> = Promise.resolve();
+let busySince = 0;
+const busyLabels = new Set<string>();
 const listeners = new Set<() => void>();
 let seq = 0;
 const emitTasks = () => listeners.forEach((l) => l());
@@ -311,8 +315,14 @@ export async function chat(
     if (signal.aborted) ctrl.abort();
     else signal.addEventListener('abort', () => ctrl.abort(), { once: true });
   }
-  running.set(id, { label, ctrl, started: Date.now() });
+  const entry = { label, ctrl, started: Date.now(), waiting: true };
+  running.set(id, entry);
+  if (!busySince) busySince = Date.now();
+  busyLabels.add(label);
   emitTasks();
+  const prev = lane;
+  let release!: () => void;
+  lane = new Promise<void>((r) => (release = r));
   let stopped = false;
   const onAbort = () => {
     stopped = true;
@@ -321,12 +331,39 @@ export async function chat(
   ctrl.signal.addEventListener('abort', onAbort, { once: true });
   const aborted = new Promise<never>((_, rej) => ctrl.signal.addEventListener('abort', () => rej(new AbortedError()), { once: true }));
   aborted.catch(() => {});
+  let ok = false;
+  try {
+    await Promise.race([prev, aborted]);
+  } catch (e) {
+    running.delete(id);
+    prev.then(release);
+    emitTasks();
+    throw e;
+  }
+  entry.waiting = false;
+  entry.started = Date.now();
+  emitTasks();
   const inner = chatInner(settings, messages, (t) => !stopped && onToken(t), (t, r) => !stopped && onProgress(t, r), ctrl.signal);
   inner.catch(() => {});
   try {
-    return await Promise.race([inner, aborted]);
+    const out = await Promise.race([inner, aborted]);
+    ok = true;
+    return out;
   } finally {
     running.delete(id);
+    release();
+    if (!running.size) {
+      // fin de la série (un résumé enchaîne plusieurs appels) : on attend un instant avant de conclure
+      setTimeout(() => {
+        if (running.size || !busySince) return;
+        const dur = Date.now() - busySince;
+        const labels = [...busyLabels];
+        busySince = 0;
+        busyLabels.clear();
+        // tâche longue terminée : toast + notification système si la fenêtre est en arrière-plan
+        if (ok && dur > 15000) window.dispatchEvent(new CustomEvent('nova:ai-done', { detail: { labels, seconds: Math.round(dur / 1000) } }));
+      }, 1500);
+    }
     emitTasks();
   }
 }
@@ -401,7 +438,8 @@ async function ollamaChat(settings: AiSettings, messages: ChatMessage[], onToken
   // Modèle absent : on prend le premier modèle installé dans Ollama.
   let model = settings.ollamaModel;
   try {
-    const installed = await listOllamaModels(settings.ollamaUrl);
+    // les modèles d'embeddings (recherche par le sens) ne savent pas discuter : on les écarte
+    const installed = (await listOllamaModels(settings.ollamaUrl)).filter((m) => !/embed|bge|minilm|e5-|gte|arctic/i.test(m));
     if (installed.length && !installed.some((m) => m === model || m.startsWith(model + ':'))) model = installed[0];
     if (!installed.length) throw new Error('Ollama ne contient aucun modèle : lancez « ollama pull qwen2.5:3b ».');
   } catch (e) {

@@ -20,6 +20,8 @@ interface Props {
   /** Documents pour les questions multi-documents (onglets ouverts ou bibliothèque). */
   corpus: (scope: 'tabs' | 'library') => Promise<CorpusDoc[]>;
   openAt: (docId: string, page: number) => void;
+  /** chapitres du document (sommaire) : le résumé avance chapitre par chapitre */
+  chapters?: { title: string; page: number }[];
 }
 
 export interface CorpusDoc {
@@ -141,15 +143,44 @@ export function AIPanel(p: Props) {
   const summarizeDoc = async () => {
     stopped.current = false;
     if (!p.texts) return;
-    if (totalChars <= BUDGET) {
+    const ch = (p.chapters ?? []).filter((c) => c.page >= 0).sort((a, b) => a.page - b.page);
+    const useChapters = ch.length >= 2 && totalChars > BUDGET / 2;
+    if (totalChars <= BUDGET && !useChapters) {
       await run('Résume ce document', [
         { role: 'system', content: SYSTEM },
         { role: 'user', content: `Document :\n${pagesText(p.texts)}\n\nFais un résumé structuré (titre, 5 à 8 points clés, conclusion), avec les pages citées.` },
       ]);
       return;
     }
-    // Map-reduce : on résume des groupes de pages, puis on combine.
+    // Résumé progressif : chapitre par chapitre (ou par groupes de pages), affiché au fur et à mesure, puis synthèse.
     const groups: PageText[][] = [];
+    const titles: string[] = [];
+    if (useChapters) {
+      for (let i = 0; i < ch.length; i++) {
+        const end = i + 1 < ch.length ? ch[i + 1].page : p.texts.length;
+        const pages = p.texts.filter((t) => t.page >= ch[i].page && t.page < Math.max(end, ch[i].page + 1));
+        if (!pages.length) continue;
+        // un long chapitre est découpé pour tenir dans la mémoire du modèle
+        let part: PageText[] = [];
+        let size = 0;
+        let k = 0;
+        for (const t of pages) {
+          if (size + t.text.length > BUDGET && part.length) {
+            groups.push(part);
+            titles.push(`${ch[i].title}${++k > 1 ? ` (suite ${k})` : ''}`);
+            part = [];
+            size = 0;
+          }
+          part.push({ ...t, text: t.text.slice(0, BUDGET) });
+          size += Math.min(t.text.length, BUDGET);
+        }
+        if (part.length) {
+          groups.push(part);
+          titles.push(`${ch[i].title}${k ? ` (suite ${k + 1})` : ''}`);
+        }
+      }
+    }
+    if (!groups.length) {
     let cur: PageText[] = [];
     let n = 0;
     for (const t of p.texts) {
@@ -162,24 +193,27 @@ export function AIPanel(p: Props) {
       n += Math.min(t.text.length, BUDGET);
     }
     if (cur.length) groups.push(cur);
-    const MAX = 10;
-    const picked = groups.length > MAX ? Array.from({ length: MAX }, (_, i) => groups[Math.floor((i * groups.length) / MAX)]) : groups;
-    setMsgs((m) => [...m, { role: 'user', content: `Résume ce document (${p.texts!.length} pages, en ${picked.length} parties)` }]);
+    }
+    const MAX = useChapters ? 24 : 10;
+    const idx = groups.length > MAX ? Array.from({ length: MAX }, (_, i) => Math.floor((i * groups.length) / MAX)) : groups.map((_, i) => i);
+    const picked = idx.map((i) => groups[i]);
+    setMsgs((m) => [...m, { role: 'user', content: `Résume ce document (${p.texts!.length} pages, ${useChapters ? `chapitre par chapitre` : `en ${picked.length} parties`})` }]);
     const partials: string[] = [];
     for (let i = 0; i < picked.length; i++) {
       const g = picked[i];
-      const label = `Partie ${i + 1}/${picked.length} (p. ${g[0].page + 1}–${g[g.length - 1].page + 1})`;
+      const range = `p. ${g[0].page + 1}–${g[g.length - 1].page + 1}`;
+      const label = useChapters ? `📖 ${titles[idx[i]]} (${range}) — ${i + 1}/${picked.length}` : `📄 Partie ${i + 1}/${picked.length} (${range})`;
       const out = await run(label, [
         { role: 'system', content: SYSTEM },
         { role: 'user', content: `Extrait :\n${pagesText(g)}\n\nRésume cet extrait en 3 à 5 puces, en citant les pages.` },
-      ], true);
+      ]);
       if (!out) return;
       partials.push(`${label}\n${out}`);
     }
-    await run('Synthèse finale', [
+    await run('✦ Synthèse finale', [
       { role: 'system', content: SYSTEM },
       { role: 'user', content: `Voici les résumés partiels d'un document :\n\n${partials.join('\n\n').slice(0, BUDGET * 1.2)}\n\nRédige la synthèse globale : une phrase d'ensemble, puis 6 à 8 points clés avec pages citées.` },
-    ], true);
+    ]);
   };
 
   const pageAction = (instruction: string, label: string) => {

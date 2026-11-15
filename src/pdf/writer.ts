@@ -51,8 +51,20 @@ export async function applyAnnotations(
   if (!annotations.length) return bytes;
   const pdf = await PDFDocument.load(bytes, { ignoreEncryption: true });
   const font = await pdf.embedFont(StandardFonts.Helvetica);
-  const fonts = new Map<StandardFonts, PDFFont>([[StandardFonts.Helvetica, font]]);
+  const fonts = new Map<string, PDFFont>([[StandardFonts.Helvetica, font]]);
   const fontFor = async (a: Annotation) => {
+    if (a.fontFamily?.startsWith('custom:')) {
+      const id = a.fontFamily;
+      if (!fonts.has(id)) {
+        const [{ default: fontkit }, { fontBytes }] = await Promise.all([import('@pdf-lib/fontkit'), import('../fonts')]);
+        const bytes = await fontBytes(id);
+        if (bytes) {
+          pdf.registerFontkit(fontkit);
+          fonts.set(id, await pdf.embedFont(bytes, { subset: true }));
+        } else fonts.set(id, font);
+      }
+      return fonts.get(id)!;
+    }
     const k = stdFontKey(a);
     if (!fonts.has(k)) fonts.set(k, await pdf.embedFont(k));
     return fonts.get(k)!;

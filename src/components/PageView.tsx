@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import { pdfjs, type PDFDocumentProxy } from '../pdf/engine';
 import type { Annotation, Rect, ToolId } from '../types';
+import { makeStamp, signatureWithDate } from '../stamps';
 import { FONT_CSS, TextStyleBar, measureText, styleShortcut, type FontFam, type TextAlign, type TextStyle } from './TextStyleBar';
 
 export interface ToolOptions {
@@ -18,7 +19,11 @@ export interface ToolOptions {
   signer: string; // signataire attendu (demande de signature)
   measureRatio: number; // échelle 1:N (1 = taille réelle)
   measureUnit: 'mm' | 'cm' | 'm' | 'in';
-  stamp: string | null; // image du tampon
+  stamp: string | null; // image du tampon (aperçu)
+  stampSpec?: { label: string; color: string } | null; // tampon régénéré au moment du clic (date/heure à jour)
+  stampDate?: 'none' | 'date' | 'datetime';
+  stampAuthor?: string;
+  sigDate?: boolean; // ajouter « Signé le … » sous la signature
   image: string | null; // image à insérer
 }
 
@@ -55,7 +60,7 @@ interface Props {
 }
 
 const uid = () => Math.random().toString(36).slice(2, 10);
-const DRAW_TOOLS: ToolId[] = ['ink', 'rect', 'ellipse', 'arrow', 'text', 'note', 'signature', 'stamp', 'image', 'redact', 'whiteout', 'measure', 'field', 'move', 'eraser'];
+const DRAW_TOOLS: ToolId[] = ['ink', 'rect', 'ellipse', 'arrow', 'text', 'note', 'signature', 'stamp', 'image', 'redact', 'whiteout', 'measure', 'field', 'move', 'eraser', 'snapshot'];
 
 interface TextItem { str: string; x: number; y: number; w: number; h: number; font: string }
 const SELECTION_TOOLS: ToolId[] = ['highlight', 'underline', 'strike'];
@@ -264,6 +269,7 @@ function PageViewImpl(p: Props) {
         return b && x >= b.x - 4 && x <= b.x + b.w + 8 && y >= b.y - 4 && y <= b.y + b.h + 8;
       });
       if (!hit) return;
+      window.dispatchEvent(new CustomEvent('nova:ann-select', { detail: { id: hit.id, x: e.clientX, y: e.clientY } }));
       const b = bboxOf(hit)!;
       const resize = !!hit.rect && Math.abs(x - (b.x + b.w)) < 10 && Math.abs(y - (b.y + b.h)) < 10;
       (e.target as Element).setPointerCapture?.(e.pointerId);
@@ -296,8 +302,21 @@ function PageViewImpl(p: Props) {
       return;
     }
     if (p.tool === 'signature' || p.tool === 'stamp' || p.tool === 'image') {
-      const src = p.tool === 'signature' ? p.signature : p.tool === 'image' ? p.opts.image : p.opts.stamp;
+      let src = p.tool === 'signature' ? p.signature : p.tool === 'image' ? p.opts.image : p.opts.stamp;
+      if (p.tool === 'stamp' && p.opts.stampSpec) src = makeStamp(p.opts.stampSpec.label, p.opts.stampSpec.color, p.opts.stampDate ?? 'date', p.opts.stampAuthor ?? '');
       if (!src) return;
+      if (p.tool === 'signature' && p.opts.sigDate) {
+        signatureWithDate(src, p.opts.stampAuthor ?? '').then((dated) => {
+          const img = new Image();
+          img.onload = () => {
+            const w = 190;
+            const h = (img.height / img.width) * w;
+            p.onAdd({ ...base(), kind: 'image', opacity: 1, rect: { x: x - w / 2, y: y - h / 2, w, h }, dataUrl: dated });
+          };
+          img.src = dated;
+        });
+        return;
+      }
       const img = new Image();
       img.onload = () => {
         const w = p.tool === 'signature' ? 160 : p.tool === 'image' ? Math.min(240, img.width) : 170;
@@ -316,6 +335,7 @@ function PageViewImpl(p: Props) {
     else if (p.tool === 'whiteout') setDraft({ ...b, kind: 'whiteout', color: '#ffffff', opacity: 1, rect: { x, y, w: 0, h: 0 } });
     else if (p.tool === 'field')
       setDraft({ ...b, kind: 'field', color: '#3d52d5', opacity: 1, fieldType: p.opts.fieldType, rect: { x, y, w: 0, h: 0 } });
+    else if (p.tool === 'snapshot') setDraft({ ...b, kind: 'rect', color: '#007aff', strokeWidth: 1.5, opacity: 1, rect: { x, y, w: 0, h: 0 }, _snap: true } as Annotation);
     else setDraft({ ...b, kind: p.tool as 'rect' | 'ellipse', rect: { x, y, w: 0, h: 0 } });
   };
 
@@ -352,9 +372,15 @@ function PageViewImpl(p: Props) {
       return;
     }
     if (!draft) return;
-    const d = { ...draft } as Annotation & { _sx?: number; _sy?: number };
+    const d = { ...draft } as Annotation & { _sx?: number; _sy?: number; _snap?: boolean };
     delete d._sx;
     delete d._sy;
+    if (d._snap) {
+      // capture d'une zone : on la transmet à l'application (aperçu, copier, enregistrer)
+      if (d.rect && d.rect.w > 4 && d.rect.h > 4) window.dispatchEvent(new CustomEvent('nova:snapshot', { detail: { page: p.pageIndex, rect: d.rect } }));
+      setDraft(null);
+      return;
+    }
     const big =
       (d.rect && d.rect.w > 3 && d.rect.h > 3) ||
       (d.kind === 'ink' && (d.points?.length ?? 0) > 1) ||

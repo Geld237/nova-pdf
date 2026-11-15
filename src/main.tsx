@@ -2,10 +2,12 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
+import { Audience } from './components/Audience'
 import { initUpdates } from './update'
 import { interceptExternalLinks, isNative } from './platform'
 
 initUpdates()
+import('./fonts').then((m) => m.initFonts())
 // Diagnostic de l'IA accessible depuis la console (aide au dépannage)
 ;(window as unknown as { __novaDiag?: () => Promise<unknown> }).__novaDiag = async () => {
   const llm = await import('./ai/llm')
@@ -19,6 +21,6 @@ if (isNative) document.documentElement.classList.add('native')
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    {new URLSearchParams(location.search).has('audience') ? <Audience /> : <App />}
   </StrictMode>,
 )

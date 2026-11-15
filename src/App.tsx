@@ -35,6 +35,9 @@ import { SignatureModal } from './components/SignatureModal';
 import type { ToolOptions } from './components/PageView';
 import { Icon, type IconName } from './icons';
 import { ColorPicker } from './components/ColorPicker';
+import { AnnInspector } from './components/AnnInspector';
+import { CompareView } from './components/CompareView';
+import { ImageExport } from './components/ImageExport';
 import { TextStyleBar, type TextStyle } from './components/TextStyleBar';
 import { ContextMenu, type MenuItem, type MenuState } from './components/ContextMenu';
 import { Workspace, type WorkspaceKind } from './components/Workspace';
@@ -88,6 +91,7 @@ const TOOLS: { id: ToolId; label: string; key?: string }[] = [
   { id: 'field', label: 'Créer un champ de formulaire' },
   { id: 'redact', label: 'Caviarder (définitif)' },
   { id: 'eraser', label: 'Gomme (supprimer une annotation)', key: 'x' },
+  { id: 'snapshot', label: 'Capturer une zone en image', key: 'c' },
 ];
 
 const COLORS = ['#ffeb3b', '#8bc34a', '#4fc3f7', '#f48fb1', '#ff9800', '#e53935', '#3949ab', '#212121'];
@@ -126,6 +130,10 @@ export default function App() {
     measureRatio: 1,
     measureUnit: 'cm',
     stamp: null,
+    stampSpec: null,
+    stampDate: (localStorage.getItem('nova:stamp-date') as 'none' | 'date' | 'datetime') || 'date',
+    stampAuthor: localStorage.getItem('nova:stamp-author') ?? '',
+    sigDate: localStorage.getItem('nova:sig-date') === '1',
     image: null,
     signer: '',
   }));
@@ -140,6 +148,23 @@ export default function App() {
   useEffect(() => {
     if (tool === 'text') setOpts((o) => (['#ffeb3b', '#fff59d', '#8bc34a', '#4fc3f7', '#f48fb1'].includes(o.color.toLowerCase()) ? { ...o, color: '#1c1c1e' } : o));
   }, [tool]);
+  const [imgExport, setImgExport] = useState<null | { zone: { page: number; rect: { x: number; y: number; w: number; h: number } } | null }>(null);
+  useEffect(() => {
+    const snap = (e: Event) => setImgExport({ zone: (e as CustomEvent).detail });
+    const all = () => setImgExport({ zone: null });
+    window.addEventListener('nova:snapshot', snap);
+    window.addEventListener('nova:export-images', all);
+    return () => {
+      window.removeEventListener('nova:snapshot', snap);
+      window.removeEventListener('nova:export-images', all);
+    };
+  }, []);
+  const [comparing, setComparing] = useState<{ pdf: PDFDocumentProxy; name: string } | null>(null);
+  useEffect(() => {
+    const on = (e: Event) => setComparing((e as CustomEvent).detail);
+    window.addEventListener('nova:compare', on);
+    return () => window.removeEventListener('nova:compare', on);
+  }, []);
   const [presenting, setPresenting] = useState(false);
   const [translating, setTranslating] = useState(false);
   const [scanning, setScanning] = useState(false);
@@ -159,8 +184,27 @@ export default function App() {
     setSidebar(false);
   };
   const [panel, setPanel] = useState<Panel>(null);
+  // les panneaux qui font travailler l'IA restent montés (cachés) : leurs tâches continuent en arrière-plan
+  const [kept, setKept] = useState<{ ai?: boolean; study?: boolean; reading?: boolean }>({});
+  useEffect(() => {
+    if (panel === 'ai' || panel === 'study' || panel === 'reading') setKept((k) => (k[panel] ? k : { ...k, [panel]: true }));
+  }, [panel]);
+  const [inspect, setInspect] = useState<{ id: string; x: number; y: number } | null>(null);
+  useEffect(() => {
+    const on = (e: Event) => setInspect((e as CustomEvent).detail);
+    window.addEventListener('nova:ann-select', on);
+    return () => window.removeEventListener('nova:ann-select', on);
+  }, []);
   const [aiRunning, setAiRunning] = useState<string[]>([]);
-  useEffect(() => onAiTasks(() => setAiRunning(aiTasks().map((t) => t.label))), []);
+  useEffect(
+    () =>
+      onAiTasks(() => {
+        const l = aiTasks();
+        setAiRunning(l.map((t) => (t.waiting ? `${t.label} (en attente)` : t.label)));
+        if (l.length && 'Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => {});
+      }),
+    [],
+  );
   const [page, setPage] = useState(0);
   const [query, setQuery] = useState('');
   const [toast, setToast] = useState<string | null>(null);
@@ -191,14 +235,40 @@ export default function App() {
     (notify as unknown as { t?: number }).t = window.setTimeout(() => setToast(null), 3500);
   }, []);
 
+  // tâche d'IA longue terminée → on prévient
+  useEffect(() => {
+    const on = (e: Event) => {
+      const { labels, seconds } = (e as CustomEvent).detail as { labels: string[]; seconds: number };
+      const what = labels.slice(0, 2).join(', ');
+      notify(`✓ IA terminée : ${what} (${seconds >= 60 ? `${Math.round(seconds / 60)} min` : `${seconds} s`})`);
+      try {
+        if (document.hidden && 'Notification' in window && Notification.permission === 'granted') new Notification('Nova PDF — IA terminée', { body: what, icon: '/icon-192.png' });
+      } catch {
+        /* notifications indisponibles */
+      }
+    };
+    window.addEventListener('nova:ai-done', on);
+    return () => window.removeEventListener('nova:ai-done', on);
+  }, [notify]);
+
   const patchDoc = useCallback((id: string, patch: Partial<DocState> | ((d: DocState) => Partial<DocState>)) => {
     setDocs((ds) => ds.map((d) => (d.id === id ? { ...d, ...(typeof patch === 'function' ? patch(d) : patch) } : d)));
   }, []);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
-    document.documentElement.classList.toggle('dyslexic', !!settings.dyslexia);
-  }, [dark, settings.dyslexia]);
+    const th = settings.theme === 'sepia' || settings.theme === 'contrast' ? settings.theme : dark ? 'dark' : 'light';
+    const root = document.documentElement;
+    root.dataset.theme = th;
+    root.classList.toggle('dyslexic', !!settings.dyslexia);
+    root.classList.toggle('sepia-pages', th === 'sepia' && settings.sepiaPages !== false);
+    if (settings.accent) {
+      root.style.setProperty('--accent', settings.accent);
+      root.style.setProperty('--accent-soft', `color-mix(in srgb, ${settings.accent} ${th === 'dark' ? 30 : 16}%, transparent)`);
+    } else {
+      root.style.removeProperty('--accent');
+      root.style.removeProperty('--accent-soft');
+    }
+  }, [dark, settings.dyslexia, settings.theme, settings.accent, settings.sepiaPages]);
   useEffect(() => {
     const mq = matchMedia?.('(prefers-color-scheme: dark)');
     const h = () => setSysDark(mq.matches);
@@ -771,13 +841,7 @@ export default function App() {
         items.push(
           { header: 'Annotation' },
           ...(hit.text ? [{ label: 'Copier le texte', icon: 'copy' as IconName, action: () => navigator.clipboard?.writeText(hit.text!) }] : []),
-          ...(['highlight', 'underline', 'strike', 'ink', 'rect', 'ellipse', 'arrow', 'text'].includes(hit.kind)
-            ? ['#ffeb3b', '#8bc34a', '#4fc3f7', '#f48fb1', '#e53935'].map((c) => ({
-                label: { '#ffeb3b': 'Jaune', '#8bc34a': 'Vert', '#4fc3f7': 'Bleu', '#f48fb1': 'Rose', '#e53935': 'Rouge' }[c]!,
-                icon: 'palette' as IconName,
-                action: () => setAnns((l) => l.map((a) => (a.id === hit.id ? { ...a, color: c } : a))),
-              }))
-            : []),
+          { label: 'Modifier (couleur, épaisseur, opacité…)', icon: 'palette' as IconName, action: () => setInspect({ id: hit.id, x: e.clientX, y: e.clientY }) },
           { label: "Supprimer l'annotation", icon: 'trash', danger: true, action: () => onDelete(hit.id) },
           'sep',
         );
@@ -1012,7 +1076,7 @@ export default function App() {
       return;
     }
     if (t === 'edittext') notify('Cliquez sur une ligne du document pour la modifier. Entrée pour valider.');
-    if (t === 'stamp' && !opts.stamp) setOpts({ ...opts, stamp: makeStamp(STAMP_PRESETS[0].label, STAMP_PRESETS[0].color) });
+    if (t === 'stamp' && !opts.stamp) setOpts({ ...opts, stamp: makeStamp(STAMP_PRESETS[0].label, STAMP_PRESETS[0].color, opts.stampDate, opts.stampAuthor), stampSpec: STAMP_PRESETS[0] });
     setTool(t);
     if (t === 'highlight' && ['#e53935', '#3949ab', '#212121'].includes(opts.color)) setOpts({ ...opts, color: '#ffeb3b' });
   };
@@ -1104,12 +1168,38 @@ export default function App() {
                 )}
               </div>
             )}
+            {tool === 'signature' && (
+              <div className="tool-opts">
+                <label className="check" title="Ajoute « Signé le … à … » sous la signature, à l'heure exacte de la pose">
+                  <input
+                    type="checkbox"
+                    checked={!!opts.sigDate}
+                    onChange={(e) => {
+                      localStorage.setItem('nova:sig-date', e.target.checked ? '1' : '0');
+                      setOpts({ ...opts, sigDate: e.target.checked });
+                    }}
+                  />
+                  Date et heure sous la signature
+                </label>
+                {opts.sigDate && (
+                  <input
+                    className="stamp-author"
+                    placeholder="Nom du signataire (facultatif)"
+                    value={opts.stampAuthor}
+                    onChange={(e) => {
+                      localStorage.setItem('nova:stamp-author', e.target.value);
+                      setOpts({ ...opts, stampAuthor: e.target.value });
+                    }}
+                  />
+                )}
+              </div>
+            )}
             {tool === 'stamp' && (
               <div className="tool-opts">
                 <select
                   onChange={(e) => {
                     const pr = STAMP_PRESETS[+e.target.value];
-                    setOpts({ ...opts, stamp: makeStamp(pr.label, pr.color) });
+                    setOpts({ ...opts, stamp: makeStamp(pr.label, pr.color, opts.stampDate, opts.stampAuthor), stampSpec: pr });
                   }}
                   title="Tampon"
                 >
@@ -1120,11 +1210,37 @@ export default function App() {
                 <button
                   onClick={async () => {
                     const t = await ui.prompt('Texte du tampon personnalisé :');
-                    if (t) setOpts({ ...opts, stamp: makeStamp(t.toUpperCase(), opts.color === '#ffeb3b' ? '#3d52d5' : opts.color) });
+                    if (!t) return;
+                    const spec = { label: t.toUpperCase(), color: opts.color === '#ffeb3b' ? '#3d52d5' : opts.color };
+                    setOpts({ ...opts, stamp: makeStamp(spec.label, spec.color, opts.stampDate, opts.stampAuthor), stampSpec: spec });
                   }}
                 >
                   Personnalisé…
                 </button>
+                <select
+                  value={opts.stampDate}
+                  title="Date sur le tampon (mise à jour à chaque pose)"
+                  onChange={(e) => {
+                    const m = e.target.value as 'none' | 'date' | 'datetime';
+                    localStorage.setItem('nova:stamp-date', m);
+                    const sp = opts.stampSpec ?? STAMP_PRESETS[0];
+                    setOpts({ ...opts, stampDate: m, stamp: makeStamp(sp.label, sp.color, m, opts.stampAuthor) });
+                  }}
+                >
+                  <option value="none">Sans date</option>
+                  <option value="date">Date</option>
+                  <option value="datetime">Date et heure</option>
+                </select>
+                <input
+                  className="stamp-author"
+                  placeholder="Nom (facultatif)"
+                  value={opts.stampAuthor}
+                  onChange={(e) => {
+                    localStorage.setItem('nova:stamp-author', e.target.value);
+                    const sp = opts.stampSpec ?? STAMP_PRESETS[0];
+                    setOpts({ ...opts, stampAuthor: e.target.value, stamp: makeStamp(sp.label, sp.color, opts.stampDate, e.target.value) });
+                  }}
+                />
                 {opts.stamp && <img src={opts.stamp} alt="" className="stamp-preview" />}
               </div>
             )}
@@ -1294,8 +1410,11 @@ export default function App() {
           )}
         </section>
 
-        {panel && !workspace && (panel === 'settings' || panel === 'library' || panel === 'share' || (doc && ctx)) && (
-          <aside className="right">
+        {(() => {
+          const showAside = !!panel && !workspace && (panel === 'settings' || panel === 'library' || panel === 'share' || !!(doc && ctx));
+          if (!showAside && !(doc && (kept.ai || kept.study || kept.reading))) return null;
+          return (
+          <aside className={`right ${showAside ? '' : 'bg-hidden'}`} aria-hidden={!showAside}>
             {panel === 'settings' && (
               <SettingsPanel
                 doc={doc ? { name: doc.name, size: doc.bytes.length, pdf: doc.pdf, currentPage: page, pageSize: doc.sizes[page], encrypted: doc.encrypted } : null}
@@ -1304,7 +1423,7 @@ export default function App() {
                 notify={notify}
               />
             )}
-            {panel === 'library' && <LibraryPanel onOpen={openFromLibrary} onImport={openDialog} activeId={doc?.fingerprint} onItemMenu={libItemMenu} />}
+            {panel === 'library' && <LibraryPanel onOpen={openFromLibrary} onImport={openDialog} activeId={doc?.fingerprint} onItemMenu={libItemMenu} ollamaUrl={ai.ollamaUrl} />}
             {panel === 'share' && (
               <SharePanel
                 ctx={ctx}
@@ -1318,14 +1437,14 @@ export default function App() {
                 }}
               />
             )}
-            {doc && panel === 'study' && (
-              <StudyPanel fingerprint={doc.fingerprint} docName={doc.name} texts={doc.texts} currentPage={page} annotations={doc.annotations} ai={ai} goTo={goTo} />
+            {doc && (panel === 'study' || kept.study) && (
+              <div className="keep" hidden={panel !== 'study'}><StudyPanel key={doc.id} fingerprint={doc.fingerprint} docName={doc.name} texts={doc.texts} currentPage={page} annotations={doc.annotations} ai={ai} goTo={goTo} /></div>
             )}
             {doc && panel === 'notes' && (
               <NotesPanel fingerprint={doc.fingerprint} docName={doc.name} currentPage={page} annotations={doc.annotations} goTo={goTo} />
             )}
-            {doc && panel === 'ai' && (
-              <AIPanel
+            {doc && (panel === 'ai' || kept.ai) && (
+              <div className="keep" hidden={panel !== 'ai'}><AIPanel key={doc.id}
                 texts={doc.texts}
                 currentPage={page}
                 annotations={doc.annotations}
@@ -1338,13 +1457,14 @@ export default function App() {
                 }}
                 corpus={corpus}
                 openAt={(id, p) => openFromLibrary(id, p)}
-              />
+                chapters={doc.outline.filter((o) => o.page != null).map((o) => ({ title: o.title, page: o.page! }))}
+              /></div>
             )}
             {ctx && panel === 'tools' && <ToolsPanel ctx={ctx} />}
             {ctx && panel === 'organize' && <OrganizePanel ctx={ctx} />}
             {ctx && panel === 'form' && <FormPanel ctx={ctx} />}
-            {doc && panel === 'reading' && (
-              <ReadingPanel
+            {doc && (panel === 'reading' || kept.reading) && (
+              <div className="keep" hidden={panel !== 'reading'}><ReadingPanel key={doc.id}
                 texts={doc.texts}
                 currentPage={page}
                 goTo={goTo}
@@ -1357,10 +1477,11 @@ export default function App() {
                 ruler={settings.readingRuler}
                 setDyslexia={(v) => setSettings({ ...settings, dyslexia: v })}
                 setRuler={(v) => setSettings({ ...settings, readingRuler: v })}
-              />
+              /></div>
             )}
           </aside>
-        )}
+          );
+        })()}
 
         <nav className="rail" aria-label="Panneaux">
           {(
@@ -1477,11 +1598,29 @@ export default function App() {
         <Presentation
           pdf={doc.pdf}
           start={page}
+          bytes={doc.bytes}
+          fingerprint={doc.fingerprint}
+          annotations={doc.annotations}
           onExit={(p) => {
             setPresenting(false);
             setTimeout(() => goTo(p), 100);
           }}
         />
+      )}
+      {imgExport && doc && (
+        <ImageExport
+          pdf={doc.pdf}
+          name={doc.name}
+          currentPage={page}
+          getBytes={getBytes}
+          hasAnnotations={doc.annotations.length > 0}
+          zone={imgExport.zone}
+          notify={notify}
+          onClose={() => setImgExport(null)}
+        />
+      )}
+      {comparing && doc && (
+        <CompareView a={doc.pdf} b={comparing.pdf} nameA={doc.name} nameB={comparing.name} onClose={() => setComparing(null)} />
       )}
       {translating && doc?.texts && (
         <TranslateView pdf={doc.pdf} texts={doc.texts} ai={ai} fingerprint={doc.fingerprint} name={doc.name} startPage={page} onClose={() => setTranslating(false)} />
@@ -1502,6 +1641,26 @@ export default function App() {
         </button>
       )}
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
+      {inspect && doc && (() => {
+        const ann = doc.annotations.find((a) => a.id === inspect.id);
+        if (!ann) return null;
+        return (
+          <AnnInspector
+            ann={ann}
+            pos={inspect}
+            onChange={(n) => setAnns((l) => l.map((a) => (a.id === n.id ? n : a)))}
+            onDelete={() => onDelete(ann.id)}
+            onDuplicate={() => {
+              const off = (r?: { x: number; y: number; w: number; h: number }) => r && { ...r, x: r.x + 12, y: r.y + 12 };
+              const copy: Annotation = { ...ann, id: crypto.randomUUID(), createdAt: Date.now(), rect: off(ann.rect), rects: ann.rects?.map((r) => off(r)!), points: ann.points?.map(([x, y]) => [x + 12, y + 12] as [number, number]) };
+              setAnns((l) => [...l, copy]);
+              setInspect({ ...inspect, id: copy.id });
+            }}
+            onFront={() => setAnns((l) => [...l.filter((a) => a.id !== ann.id), ann])}
+            onClose={() => setInspect(null)}
+          />
+        );
+      })()}
       <DialogHost />
       {dragOver && <div className="drop-overlay">Déposez vos PDF ici</div>}
       {toast && <div className="toast" role="status">{toast}</div>}

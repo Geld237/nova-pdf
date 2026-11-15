@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ui } from '../dialogs';
+import { semanticSearch } from '../semantic';
 import { listLibrary, removeFromLibrary, searchLibrary, updateLibItem, type LibHit, type LibItem } from '../library';
 
 interface Props {
@@ -7,16 +8,20 @@ interface Props {
   onImport: () => void;
   activeId?: string;
   onItemMenu?: (e: React.MouseEvent, item: LibItem) => void;
+  ollamaUrl?: string;
 }
 
 /** Bibliothèque : dossiers, étiquettes, favoris, recherche dans tous les PDF. */
-export function LibraryPanel({ onOpen, onImport, activeId, onItemMenu }: Props) {
+export function LibraryPanel({ onOpen, onImport, activeId, onItemMenu, ollamaUrl = 'http://localhost:11434' }: Props) {
   const [items, setItems] = useState<LibItem[]>([]);
   const [folder, setFolder] = useState<string | null>(null); // null = tous
   const [tag, setTag] = useState<string | null>(null);
   const [favOnly, setFavOnly] = useState(false);
   const [q, setQ] = useState('');
-  const [hits, setHits] = useState<LibHit[] | null>(null);
+  const [hits, setHits] = useState<(LibHit & { score?: number })[] | null>(null);
+  const [mode, setMode] = useState<'words' | 'meaning'>('words');
+  const [engine, setEngine] = useState('');
+  const [searching, setSearching] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
 
   const refresh = () => listLibrary().then(setItems);
@@ -44,7 +49,21 @@ export function LibraryPanel({ onOpen, onImport, activeId, onItemMenu }: Props) 
       (!favOnly || i.favorite),
   );
 
-  const runSearch = async () => setHits(q.trim().length >= 2 ? await searchLibrary(q) : null);
+  const runSearch = async () => {
+    if (q.trim().length < 2) return setHits(null);
+    if (mode === 'words') {
+      setEngine('');
+      return setHits(await searchLibrary(q));
+    }
+    setSearching('Recherche…');
+    try {
+      const r = await semanticSearch(q, ollamaUrl, setSearching);
+      setEngine(r.engine);
+      setHits(r.hits);
+    } finally {
+      setSearching(null);
+    }
+  };
   const totalMb = items.reduce((s, i) => s + i.size, 0) / 1048576;
 
   return (
@@ -59,7 +78,17 @@ export function LibraryPanel({ onOpen, onImport, activeId, onItemMenu }: Props) 
           runSearch();
         }}
       >
-        <input type="search" placeholder="Rechercher dans tous vos PDF…" value={q} onChange={(e) => { setQ(e.target.value); if (!e.target.value) setHits(null); }} />
+        <input
+          type="search"
+          placeholder={mode === 'words' ? 'Rechercher dans tous vos PDF…' : 'Décrivez ce que vous cherchez (ex. « le contrat qui parle de résiliation »)'}
+          value={q}
+          onChange={(e) => { setQ(e.target.value); if (!e.target.value) setHits(null); }}
+        />
+        <div className="seg search-mode">
+          <button type="button" className={mode === 'words' ? 'active' : ''} onClick={() => setMode('words')}>Mots exacts</button>
+          <button type="button" className={mode === 'meaning' ? 'active' : ''} onClick={() => setMode('meaning')} title="Trouve aussi les passages qui parlent du même sujet avec d'autres mots">Par le sens</button>
+        </div>
+        {searching && <small className="muted">⏳ {searching}</small>}
       </form>
 
       {hits ? (
@@ -68,6 +97,12 @@ export function LibraryPanel({ onOpen, onImport, activeId, onItemMenu }: Props) 
             {hits.length} résultat(s) dans {new Set(hits.map((h) => h.item.id)).size} document(s){' '}
             <button className="link" onClick={() => setHits(null)}>fermer</button>
           </p>
+          {engine && (
+            <p className="muted small">
+              Recherche {engine}.{' '}
+              {engine.startsWith('locale') && <>Pour une vraie recherche par le sens, installez un modèle d’embeddings dans Ollama : <code>ollama pull nomic-embed-text</code></>}
+            </p>
+          )}
           <ul className="hits">
             {hits.map((h, i) => (
               <li key={i}>

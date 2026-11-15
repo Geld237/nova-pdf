@@ -1,6 +1,9 @@
+import { useEffect, useRef, useState } from 'react';
 import { ColorPicker } from './ColorPicker';
+import { BUILTIN_STYLES, addFont, customCss, customFonts, deleteStyle, onFontsChange, saveStyle, savedStyles } from '../fonts';
+import { ui } from '../dialogs';
 
-export type FontFam = 'sans' | 'serif' | 'mono';
+export type FontFam = string; // 'sans' | 'serif' | 'mono' | 'custom:…'
 export type TextAlign = 'left' | 'center' | 'right';
 
 export interface TextStyle {
@@ -14,17 +17,21 @@ export interface TextStyle {
   bg: string | null;
 }
 
-export const FONT_CSS: Record<FontFam, string> = {
+const STD_CSS: Record<string, string> = {
   sans: 'Helvetica, Arial, sans-serif',
   serif: '"Times New Roman", Times, serif',
   mono: '"Courier New", Courier, monospace',
 };
 
-export const FONT_LABEL: Record<FontFam, string> = {
+export const FONT_LABEL: Record<string, string> = {
   sans: 'Helvetica',
   serif: 'Times',
   mono: 'Courier',
 };
+
+export const fontCss = (f: FontFam | undefined) => (f?.startsWith('custom:') ? customCss(f) : STD_CSS[f ?? 'sans'] ?? STD_CSS.sans);
+/** compatibilité : FONT_CSS[x] */
+export const FONT_CSS = new Proxy({} as Record<string, string>, { get: (_t, k: string) => fontCss(k) });
 
 const SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 60, 72];
 
@@ -33,7 +40,7 @@ let ctx: CanvasRenderingContext2D | null = null;
 export function measureText(text: string, s: Pick<TextStyle, 'fontFamily' | 'fontSize' | 'bold' | 'italic'>) {
   ctx ??= document.createElement('canvas').getContext('2d');
   if (!ctx) return text.length * s.fontSize * 0.55;
-  ctx.font = `${s.italic ? 'italic ' : ''}${s.bold ? 'bold ' : ''}${s.fontSize}px ${FONT_CSS[s.fontFamily]}`;
+  ctx.font = `${s.italic ? 'italic ' : ''}${s.bold ? 'bold ' : ''}${s.fontSize}px ${fontCss(s.fontFamily)}`;
   return Math.max(...text.split('\n').map((l) => ctx!.measureText(l).width), s.fontSize);
 }
 
@@ -55,22 +62,72 @@ interface Props {
 /** Barre de mise en forme du texte : police, taille, gras, italique, souligné, alignement, couleurs. */
 export function TextStyleBar({ value: v, onChange, bgOptional = true }: Props) {
   const set = (p: Partial<TextStyle>) => onChange({ ...v, ...p });
+  const [, force] = useState(0);
+  useEffect(() => onFontsChange(() => force((n) => n + 1)), []);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const styles = [...BUILTIN_STYLES, ...savedStyles()];
+  const onStyle = async (val: string) => {
+    if (val === '__save') {
+      const name = await ui.prompt('Nom de ce style :', '');
+      if (name?.trim()) saveStyle({ name: name.trim(), style: v });
+    } else if (val === '__del') {
+      const mine = savedStyles();
+      if (!mine.length) return ui.alert('Aucun style personnel à supprimer.');
+      const name = await ui.prompt(`Style à supprimer (${mine.map((s) => s.name).join(', ')}) :`, mine[0].name);
+      if (name) deleteStyle(name.trim());
+    } else {
+      const s = styles.find((x) => x.name === val);
+      if (s) onChange({ ...s.style });
+    }
+    force((n) => n + 1);
+  };
   const keep = (e: React.MouseEvent) => e.preventDefault(); // garde le focus dans la zone de texte
   return (
     <div className="text-style-bar" role="toolbar" aria-label="Mise en forme du texte">
+      <select className="tsb-style" value="" onChange={(e) => onStyle(e.target.value)} title="Styles enregistrés">
+        <option value="" disabled>Styles…</option>
+        {styles.map((s) => (
+          <option key={s.name} value={s.name}>{s.name}</option>
+        ))}
+        <option value="__save">＋ Enregistrer le style actuel…</option>
+        <option value="__del">Supprimer un style…</option>
+      </select>
       <select
         className="tsb-font"
         value={v.fontFamily}
-        onChange={(e) => set({ fontFamily: e.target.value as FontFam })}
+        onChange={(e) => (e.target.value === '__add' ? fileRef.current?.click() : set({ fontFamily: e.target.value }))}
         title="Police"
-        style={{ fontFamily: FONT_CSS[v.fontFamily] }}
+        style={{ fontFamily: fontCss(v.fontFamily) }}
       >
-        {(Object.keys(FONT_LABEL) as FontFam[]).map((f) => (
-          <option key={f} value={f} style={{ fontFamily: FONT_CSS[f] }}>
+        {Object.keys(FONT_LABEL).map((f) => (
+          <option key={f} value={f} style={{ fontFamily: fontCss(f) }}>
             {FONT_LABEL[f]}
           </option>
         ))}
+        {customFonts().map((f) => (
+          <option key={f.id} value={f.id} style={{ fontFamily: customCss(f.id) }}>
+            {f.name}
+          </option>
+        ))}
+        <option value="__add">＋ Ajouter une police (.ttf/.otf)…</option>
       </select>
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".ttf,.otf,font/ttf,font/otf"
+        hidden
+        onChange={async (e) => {
+          const file = e.target.files?.[0];
+          e.target.value = '';
+          if (!file) return;
+          try {
+            const f = await addFont(file);
+            set({ fontFamily: f.id });
+          } catch (err) {
+            ui.alert((err as Error).message);
+          }
+        }}
+      />
       <input
         className="tsb-size"
         type="number"

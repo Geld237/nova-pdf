@@ -17,15 +17,15 @@ Bibliothèque (dossiers, étiquettes, recherche plein texte), IA multi-documents
 ## v0.8 — disponible ✅
 Bouton « Arrêter » fiable pour toutes les tâches d'IA (résumé, QCM, fiches, traduction, podcast, anonymisation) et arrêt global dans la barre d'état ; mise en forme du texte inséré (police, taille, gras, italique, souligné, alignement, couleur, fond) et modification d'un texte déjà posé ; carte des couleurs (palette, spectre, couleurs récentes, code hex, pipette) ; un clic gauche ou droit au milieu du document referme les panneaux de droite et de gauche.
 
+## v0.9 — disponible ✅
+Thèmes sépia et contraste élevé, couleur d'accent ; inspecteur pour modifier une annotation après coup (couleur, épaisseur, opacité, dupliquer) ; styles de texte enregistrés et polices personnelles (.ttf/.otf) intégrées au PDF ; tâches d'IA en arrière-plan avec file d'attente et notification de fin ; résumé progressif chapitre par chapitre ; comparaison visuelle de deux versions (mots ajoutés/supprimés, différences d'image) ; vue présentateur sur deux écrans (diapo suivante, notes, minuteur) ; recherche par le sens dans la bibliothèque ; tampons et signatures datés à la minute ; export en images (PNG/JPG/WebP, résolution, ZIP) et capture de zone.
+
 ## Prochaines idées 💡
 - [ ] **Widgets natifs** d'écran d'accueil (Android AppWidget, iOS WidgetKit) : derniers documents, fiches du jour
 - [ ] **Reconnaissance vocale 100 % locale** (Whisper en WebGPU)
 - [ ] Relecture à plus de deux appareils, curseurs des autres relecteurs
-- [ ] Recherche sémantique (embeddings locaux) dans la bibliothèque
 - [ ] **Détection des champs** d'un formulaire scanné, et des signatures manquantes
-- [ ] Mode présentation : vue présentateur sur un deuxième écran
 - [ ] Surlignage synchronisé avec la lecture à voix haute
-- [ ] **Thèmes et couleurs** personnalisables, mode sépia
 - [ ] **Extensions** : API de plugins pour ajouter des outils
 
 ## v0.4 — compléter les fondamentaux

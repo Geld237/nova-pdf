@@ -3,7 +3,7 @@
  * dans l'esprit des icônes macOS / iOS.
  */
 import {
-  Archive, ArrowRightLeft, ChevronRight, BookOpen, Bookmark, BookmarkPlus, ChevronLeft, Circle, ClipboardList, Combine, Copy, Crop,
+  Archive, ArrowRightLeft, Camera, ChevronRight, BookOpen, Bookmark, BookmarkPlus, ChevronLeft, Circle, ClipboardList, Combine, Copy, Crop,
   Droplets, Eraser, EyeOff, FileOutput, FilePlus2, FileSignature, FileText, FileType2, Files, FolderOpen,
   GalleryVertical, GitCompareArrows, GraduationCap, Hash, Highlighter, Image, ImageDown, Info, Languages, Layers,
   LayoutGrid, Library, ListOrdered, ListTree, Lock, LockOpen, Maximize, MessageSquareQuote, Mic, Minimize2, Minus,
@@ -20,7 +20,7 @@ export const Icons = {
   // outils d'annotation
   select: MousePointer2, highlight: Highlighter, underline: Underline, strike: Strikethrough, ink: PenLine,
   rect: Square, ellipse: Circle, arrow: MoveUpRight, text: Type, note: StickyNote, signature: Signature,
-  stamp: Stamp, edittext: TextCursor, image: ImagePlus, move: Move, whiteout: Paintbrush, measure: Ruler, field: TextCursorInput, redact: EyeOff, eraser: Eraser,
+  stamp: Stamp, edittext: TextCursor, image: ImagePlus, move: Move, whiteout: Paintbrush, measure: Ruler, field: TextCursorInput, redact: EyeOff, eraser: Eraser, snapshot: Camera,
   // barre du haut
   open: FolderOpen, save: Save, saveAs: SaveAll, print: Printer, undo: Undo2, redo: Redo2, sun: Sun, moon: Moon, mic: Mic,
   // barre de vue

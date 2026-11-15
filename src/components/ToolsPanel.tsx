@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { ui } from '../dialogs';
 import { Section, ToolNav } from './ToolSection';
 import { Icon, type IconName } from '../icons';
-import { canvasToBlob, extractAllText, openPdf, renderPageToCanvas, type PDFDocumentProxy } from '../pdf/engine';
+import { extractAllText, openPdf, type PDFDocumentProxy } from '../pdf/engine';
 import {
   addPageNumbers, addWatermark, baseName, diffLines, download, extractPages, mergePdfs,
   parseRanges, readMeta, splitPdf, stripMeta, writeMeta, type Meta,
@@ -37,7 +37,7 @@ export interface DocCtx {
   startScan: () => void;
   openPanel: (p: 'organize') => void;
   openWorkspace: (k: 'organize' | 'split' | 'extract' | 'crop' | 'merge' | 'nup') => void;
-  selectTool: (t: 'edittext' | 'image' | 'move' | 'whiteout') => void;
+  selectTool: (t: 'edittext' | 'image' | 'move' | 'whiteout' | 'snapshot') => void;
 }
 
 /** Catalogue des outils : icône, couleur de tuile (dégradé façon iOS) et groupe. */
@@ -76,6 +76,7 @@ const CATALOG: { group: string; items: { id: string; label: string; icon: IconNa
       { id: '@scan', label: 'Scanner', icon: 'scan', color: ['#8e8e93', '#636366'], keywords: 'caméra photo' },
       { id: 'convert', label: 'Convertir', icon: 'convert', color: ['#ff6961', '#ff3b30'], keywords: 'word docx html images' },
       { id: 'export', label: 'Exporter', icon: 'export', color: ['#64d2ff', '#32ade6'], keywords: 'png jpg texte markdown' },
+      { id: '!snapshot', label: 'Capture', icon: 'snapshot', color: ['#5ac8fa', '#007aff'], keywords: 'capture zone image png copier screenshot' },
       { id: 'ocr', label: 'OCR', icon: 'ocr', color: ['#ffd60a', '#ffcc00'], keywords: 'reconnaissance texte scan cherchable' },
     ],
   },
@@ -350,23 +351,11 @@ export function ToolsPanel({ ctx }: { ctx: DocCtx }) {
 
       <Section id="export" title="Exporter">
         <div className="col">
-          <button
-            onClick={wrap('Export image', async () => {
-              const c = await renderPageToCanvas(ctx.pdf, ctx.currentPage, 2);
-              download(await canvasToBlob(c), `${base}-p${ctx.currentPage + 1}.png`);
-            })}
-          >
-            Page courante en PNG
+          <button className="primary" onClick={() => window.dispatchEvent(new Event('nova:export-images'))}>
+            Pages en images (PNG, JPG, WebP)…
           </button>
-          <button
-            onClick={wrap('Export images', async () => {
-              for (let i = 0; i < ctx.numPages; i++) {
-                const c = await renderPageToCanvas(ctx.pdf, i, 2);
-                download(await canvasToBlob(c, 'image/jpeg', 0.9), `${base}-p${i + 1}.jpg`);
-              }
-            })}
-          >
-            Toutes les pages en JPG
+          <button onClick={() => ctx.selectTool('snapshot')} title="Dessinez un cadre sur la page pour en faire une image">
+            Capturer une zone…
           </button>
           <button
             onClick={wrap('Export texte', async () => {
@@ -415,6 +404,18 @@ export function ToolsPanel({ ctx }: { ctx: DocCtx }) {
       </Section>
 
       <Section id="compare" title="Comparer avec une autre version">
+        <p className="muted">La comparaison visuelle affiche les deux versions côte à côte : en rouge ce qui a disparu, en vert ce qui est nouveau.</p>
+        <button
+          className="primary"
+          onClick={wrap('Comparaison', async () => {
+            const [f] = await pickFiles('application/pdf', false);
+            if (!f) return;
+            const other = await openPdf(new Uint8Array(await f.arrayBuffer()), () => ui.prompt('Mot de passe du document à comparer :', '', { password: true }));
+            window.dispatchEvent(new CustomEvent('nova:compare', { detail: { pdf: other, name: f.name } }));
+          })}
+        >
+          Comparaison visuelle (nouvelle version)…
+        </button>
         <button
           onClick={wrap('Comparaison', async () => {
             const [f] = await pickFiles('application/pdf', false);
@@ -425,7 +426,7 @@ export function ToolsPanel({ ctx }: { ctx: DocCtx }) {
             setDiff(diffLines(a, b));
           })}
         >
-          Choisir l'autre PDF…
+          Liste des lignes modifiées…
         </button>
         {diff && (
           <>
