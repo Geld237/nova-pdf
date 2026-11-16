@@ -434,7 +434,7 @@ export default function App() {
   const maxW = useMemo(() => (doc ? Math.max(...doc.sizes.map((s) => s.w)) : 600), [doc]);
   const applyFit = useCallback(() => {
     if (!doc || !fit || !viewer.current) return;
-    const cw = viewer.current.containerWidth() - 48;
+    const cw = viewer.current.containerWidth() - (window.innerWidth <= 760 ? 14 : 48); // marges réduites sur téléphone
     const ch = viewer.current.containerHeight() - 32;
     const perRow = layout === 'double' ? 2 : 1;
     const s0 = doc.sizes[page] ?? doc.sizes[0];
@@ -631,6 +631,109 @@ export default function App() {
   };
 
   const goTo = useCallback((p: number) => viewer.current?.scrollToPage(p), []);
+
+  // ----- Téléphone / tablette : gestes et confort ---------------------------
+  const touchPrefs = { ...DEFAULT_SETTINGS.touch, ...(settings.touch ?? {}) };
+  const touchRef = useRef(touchPrefs);
+  touchRef.current = touchPrefs;
+  const lastRightPanel = useRef<Panel>('tools');
+  useEffect(() => {
+    if (panel) lastRightPanel.current = panel;
+  }, [panel]);
+  const gestureState = useRef({ sidebar, panel, page, tool, numPages: doc?.sizes.length ?? 0 });
+  gestureState.current = { sidebar, panel, page, tool, numPages: doc?.sizes.length ?? 0 };
+  const [barsHidden, setBarsHidden] = useState(false);
+
+  // glisser le doigt : bords → panneaux, milieu → page suivante / précédente
+  useEffect(() => {
+    let st: { x: number; y: number; t: number; edge: 'left' | 'right' | null; el: HTMLElement; multi: boolean } | null = null;
+    const EDGE = 32;
+    const blocked = (el: HTMLElement) =>
+      !!el.closest('input, textarea, select, [contenteditable], .modal, .workspace, .color-pop, .ann-inspector, .topbar, .rail, .tabs, .ws-strip, .crop-stage, .scan-stage, .presentation, .compare-view, .overlay, .sig-pad, .text-edit-box, .inline-editor');
+    const onStart = (e: TouchEvent) => {
+      if (e.touches.length !== 1) {
+        if (st) st.multi = true;
+        return;
+      }
+      const t = e.touches[0];
+      const x = t.clientX;
+      st = { x, y: t.clientY, t: Date.now(), edge: x < EDGE ? 'left' : x > window.innerWidth - EDGE ? 'right' : null, el: e.target as HTMLElement, multi: false };
+    };
+    const onEnd = (e: TouchEvent) => {
+      const s0 = st;
+      if (!s0 || e.touches.length) return;
+      st = null;
+      if (s0.multi) return;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - s0.x;
+      const dy = t.clientY - s0.y;
+      if (Math.abs(dx) < 60 || Math.abs(dy) > Math.abs(dx) * 0.6 || Date.now() - s0.t > 1200) return;
+      const g = gestureState.current;
+      const prefs = touchRef.current;
+      if (window.getSelection()?.toString()) return;
+      // fermer un panneau en le repoussant vers son bord
+      if (g.sidebar && dx < 0 && (s0.el.closest('.sidebar') || window.innerWidth <= 760)) return setSidebar(false);
+      if (g.panel && dx > 0 && (s0.el.closest('.right') || window.innerWidth <= 760)) return setPanel(null);
+      if (blocked(s0.el)) return;
+      if (prefs.swipePanels && s0.edge === 'left' && dx > 0) return setSidebar(true);
+      if (prefs.swipePanels && s0.edge === 'right' && dx < 0) return setPanel(lastRightPanel.current ?? 'tools');
+      // changer de page : seulement si la page tient en largeur et qu'aucun outil de dessin n'est actif
+      const v = s0.el.closest('.viewer') as HTMLElement | null;
+      if (prefs.swipePages && v && v.scrollWidth <= v.clientWidth + 2 && (g.tool === 'select' || g.tool === 'hand') && !g.sidebar && !g.panel) {
+        const next = Math.max(0, Math.min(g.numPages - 1, g.page + (dx < 0 ? 1 : -1)));
+        if (next !== g.page) viewer.current?.scrollToPage(next);
+      }
+    };
+    document.addEventListener('touchstart', onStart, { passive: true });
+    document.addEventListener('touchend', onEnd, { passive: true });
+    return () => {
+      document.removeEventListener('touchstart', onStart);
+      document.removeEventListener('touchend', onEnd);
+    };
+  }, []);
+
+  // masquer les barres en lisant (téléphone) : on descend → elles disparaissent, on remonte → elles reviennent
+  useEffect(() => {
+    let lastY = 0;
+    let acc = 0;
+    const on = (e: Event) => {
+      const el = e.target as HTMLElement;
+      if (!el.classList?.contains('viewer')) return;
+      const y = el.scrollTop;
+      const d = y - lastY;
+      lastY = y;
+      if (!touchRef.current.autoHideBars || window.innerWidth > 760) return setBarsHidden(false);
+      acc = Math.sign(d) === Math.sign(acc) ? acc + d : d;
+      if (y < 40) setBarsHidden(false);
+      else if (acc > 60) setBarsHidden(true);
+      else if (acc < -40) setBarsHidden(false);
+    };
+    document.addEventListener('scroll', on, true);
+    return () => document.removeEventListener('scroll', on, true);
+  }, []);
+  useEffect(() => {
+    if (panel || sidebar || tool !== 'select') setBarsHidden(false);
+  }, [panel, sidebar, tool]);
+
+  // garder l'écran allumé pendant la lecture
+  useEffect(() => {
+    if (!touchPrefs.keepAwake || !doc || !('wakeLock' in navigator)) return;
+    let lock: { release: () => Promise<void> } | null = null;
+    const get = () =>
+      (navigator as unknown as { wakeLock: { request: (t: 'screen') => Promise<{ release: () => Promise<void> }> } }).wakeLock
+        .request('screen')
+        .then((l) => (lock = l))
+        .catch(() => {});
+    get();
+    const vis = () => document.visibilityState === 'visible' && get();
+    document.addEventListener('visibilitychange', vis);
+    return () => {
+      document.removeEventListener('visibilitychange', vis);
+      lock?.release().catch(() => {});
+    };
+  }, [touchPrefs.keepAwake, doc?.id]);
+
+  const [toolSheet, setToolSheet] = useState(false);
 
   const ctx: DocCtx | null = doc
     ? {
@@ -1085,7 +1188,7 @@ export default function App() {
 
   return (
     <div
-      className={`app ${focus ? 'focus' : ''}`}
+      className={`app ${focus ? 'focus' : ''} ${barsHidden ? 'bars-hidden' : ''} ${touchPrefs.bigButtons ? 'big-buttons' : ''} ${touchPrefs.toolSheet ? 'tool-sheet-mode' : ''}`}
       onDragOver={(e) => {
         e.preventDefault();
         setDragOver(true);
@@ -1369,11 +1472,18 @@ export default function App() {
                   if (t.closest('input, textarea, select, [contenteditable], .text-edit-box, .ann-editor, .color-pop')) return;
                   // clic gauche ou droit au milieu : on referme les panneaux latéraux (droite ET gauche)
                   closeSidePanels();
+                  setBarsHidden(false); // un toucher fait réapparaître les barres masquées
                 }}
               >
               <Viewer
                 ref={viewer}
                 onZoomBy={zoom}
+                onDoubleTap={() => {
+                  if (!touchRef.current.doubleTapZoom) return null;
+                  if (fit === 'width' || fit === 'page') return 2.2; // zoom sur l'endroit touché
+                  setFit('width'); // déjà zoomé : retour à la pleine largeur
+                  return null;
+                }}
                 doc={doc.pdf}
                 docKey={`${doc.id}-${doc.version}`}
                 sizes={doc.sizes}
@@ -1641,6 +1751,47 @@ export default function App() {
           <Icon name="close" size={14} /> Quitter le mode concentration
         </button>
       )}
+      {doc && !workspace && touchPrefs.toolSheet && (
+        <button
+          className={`fab ${tool !== 'select' ? 'active' : ''}`}
+          onClick={() => setToolSheet(true)}
+          aria-label="Outils d'annotation"
+          title="Outils"
+        >
+          <Icon name={(tool === 'select' ? 'ink' : tool) as IconName} size={24} />
+        </button>
+      )}
+      {doc && tool !== 'select' && touchPrefs.toolSheet && !workspace && (
+        <button className="fab-stop" onClick={() => setTool('select')} aria-label="Revenir à la lecture">✕ {TOOLS.find((t) => t.id === tool)?.label.split(' (')[0]}</button>
+      )}
+      {toolSheet && (
+        <div className="sheet-backdrop" onClick={() => setToolSheet(false)}>
+          <div className="sheet" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Outils">
+            <div className="sheet-grip" />
+            <div className="sheet-grid">
+              {TOOLS.map((t) => (
+                <button
+                  key={t.id}
+                  className={`sheet-tool ${tool === t.id ? 'active' : ''}`}
+                  onClick={() => {
+                    pickTool(t.id);
+                    setToolSheet(false);
+                  }}
+                >
+                  <span className="sheet-ico"><Icon name={t.id as IconName} size={24} /></span>
+                  <small>{SHORT_LABEL[t.id] ?? t.label.split(' (')[0]}</small>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+      {doc && touchPrefs.swipePanels && !sidebar && !panel && !workspace && (
+        <>
+          <button className="edge-hint left" aria-label="Ouvrir le panneau de gauche" onClick={() => setSidebar(true)} />
+          <button className="edge-hint right" aria-label="Ouvrir le panneau de droite" onClick={() => setPanel(lastRightPanel.current ?? 'tools')} />
+        </>
+      )}
       {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
       {inspect && doc && (() => {
         const ann = doc.annotations.find((a) => a.id === inspect.id);
@@ -1764,6 +1915,11 @@ function Welcome({
 }
 
 /** Champ « page » : on peut taper librement, la page s'ouvre à Entrée ou en quittant le champ. */
+const SHORT_LABEL: Partial<Record<string, string>> = {
+  select: 'Lecture', edittext: 'Éditer texte', move: 'Déplacer', field: 'Champ', ink: 'Dessin',
+  eraser: 'Gomme', snapshot: 'Capture', whiteout: 'Correcteur', redact: 'Caviarder', image: 'Image',
+};
+
 function PageInput({ page, total, onGo }: { page: number; total: number; onGo: (p: number) => void }) {
   const [v, setV] = useState(String(page + 1));
   const [editing, setEditing] = useState(false);

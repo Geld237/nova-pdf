@@ -29,6 +29,8 @@ interface Props {
   ruler?: boolean;
   /** zoom par pincement (2 doigts) ou Ctrl + molette / pincement du pavé tactile */
   onZoomBy?: (factor: number) => void;
+  /** double toucher : renvoie le facteur de zoom à appliquer, ou null si l'application gère (retour à la largeur) */
+  onDoubleTap?: () => number | null;
 }
 
 export const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(p, ref) {
@@ -52,6 +54,40 @@ export const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(p, ref) {
     el.addEventListener('scroll', on, { passive: true });
     return () => el.removeEventListener('scroll', on);
   }, []);
+  // page courante = celle qui occupe le plus de place à l'écran (pas dans la zone de préchargement)
+  const pageCb = useRef(p.onPageChange);
+  pageCb.current = p.onPageChange;
+  const trackPage = useCallback(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const vr = el.getBoundingClientRect();
+    let best = -1;
+    let bestH = 0;
+    el.querySelectorAll<HTMLElement>('[data-page]').forEach((pg) => {
+      const r = pg.getBoundingClientRect();
+      const h = Math.min(r.bottom, vr.bottom) - Math.max(r.top, vr.top);
+      if (h > bestH + 1) {
+        bestH = h;
+        best = +pg.dataset.page!;
+      }
+    });
+    if (best >= 0) pageCb.current(best);
+  }, []);
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    let raf = 0;
+    const on = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(trackPage);
+    };
+    el.addEventListener('scroll', on, { passive: true });
+    return () => {
+      el.removeEventListener('scroll', on);
+      cancelAnimationFrame(raf);
+    };
+  }, [trackPage]);
+
   // point à garder sous les doigts lors d'un zoom par pincement
   const pinchAnchor = useRef<{ mx: number; my: number; cx: number; cy: number; s: number } | null>(null);
   const prevScale = useRef(p.scale);
@@ -68,6 +104,8 @@ export const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(p, ref) {
   }, [p.scale]);
 
   // ---- zoom avec deux doigts (iPhone, iPad, Android) et Ctrl + molette ----
+  const dblTap = useRef(p.onDoubleTap);
+  dblTap.current = p.onDoubleTap;
   const zoomBy = useRef(p.onZoomBy);
   zoomBy.current = p.onZoomBy;
   const scaleRef = useRef(p.scale);
@@ -90,8 +128,71 @@ export const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(p, ref) {
       pinchAnchor.current = { mx, my, cx, cy, s: scaleRef.current };
       zoomBy.current?.(target / scaleRef.current);
     };
+    // iPhone / iPad (et Safari sur Mac) : WebKit envoie des « gesture events » pour le pincement,
+    // plus fiables que les touchmove (qui peuvent être suspendus pendant le défilement natif).
+    const hasGesture = typeof (window as unknown as { GestureEvent?: unknown }).GestureEvent !== 'undefined';
+    let g: { mx: number; my: number; cx: number; cy: number } | null = null;
+    const gStart = (e: Event) => {
+      e.preventDefault();
+      const ge = e as unknown as { clientX: number; clientY: number };
+      const r = el.getBoundingClientRect();
+      const mx = ge.clientX - r.left;
+      const my = ge.clientY - r.top;
+      g = { mx, my, cx: el.scrollLeft + mx, cy: el.scrollTop + my };
+      ratio = 1;
+      last = { mx, my };
+      if (pages) pages.style.transformOrigin = `${g.cx}px ${g.cy}px`;
+    };
+    const gChange = (e: Event) => {
+      e.preventDefault();
+      if (!g) return;
+      const ge = e as unknown as { scale: number; clientX: number; clientY: number };
+      const r = el.getBoundingClientRect();
+      ratio = Math.max(0.25 / scaleRef.current, Math.min(5 / scaleRef.current, ge.scale || 1));
+      last = { mx: ge.clientX - r.left, my: ge.clientY - r.top };
+      if (pages) pages.style.transform = `translate(${last.mx - g.mx}px, ${last.my - g.my}px) scale(${ratio})`;
+    };
+    const gEnd = (e: Event) => {
+      e.preventDefault();
+      if (!g) return;
+      const s0 = g;
+      g = null;
+      if (pages) {
+        pages.style.transform = '';
+        pages.style.transformOrigin = '';
+      }
+      if (Math.abs(ratio - 1) < 0.02) {
+        el.scrollLeft = s0.cx - last.mx;
+        el.scrollTop = s0.cy - last.my;
+      } else commit(ratio, last.mx, last.my, s0.cx, s0.cy);
+    };
+    // double toucher
+    let lastTap = { t: 0, x: 0, y: 0 };
+    let tapStart: { t: number; x: number; y: number; n: number } | null = null;
+    const onTapStart = (e: TouchEvent) => {
+      tapStart = e.touches.length === 1 ? { t: Date.now(), x: e.touches[0].clientX, y: e.touches[0].clientY, n: 1 } : null;
+    };
+    const onTapEnd = (e: TouchEvent) => {
+      if (!tapStart || e.touches.length) return;
+      const t = e.changedTouches[0];
+      const moved = Math.hypot(t.clientX - tapStart.x, t.clientY - tapStart.y) > 12;
+      const long = Date.now() - tapStart.t > 300;
+      tapStart = null;
+      if (moved || long || !dblTap.current) return;
+      const now = Date.now();
+      if (now - lastTap.t < 320 && Math.hypot(t.clientX - lastTap.x, t.clientY - lastTap.y) < 40) {
+        lastTap = { t: 0, x: 0, y: 0 };
+        const f = dblTap.current();
+        if (f == null) return;
+        e.preventDefault();
+        const r = el.getBoundingClientRect();
+        const mx = t.clientX - r.left;
+        const my = t.clientY - r.top;
+        commit(f, mx, my, el.scrollLeft + mx, el.scrollTop + my);
+      } else lastTap = { t: now, x: t.clientX, y: t.clientY };
+    };
     const onStart = (e: TouchEvent) => {
-      if (e.touches.length !== 2) return;
+      if (hasGesture || e.touches.length !== 2) return;
       const m = mid(e.touches);
       start = { d: dist(e.touches), ...m, cx: el.scrollLeft + m.mx, cy: el.scrollTop + m.my };
       ratio = 1;
@@ -99,6 +200,10 @@ export const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(p, ref) {
       if (pages) pages.style.transformOrigin = `${start.cx}px ${start.cy}px`;
     };
     const onMove = (e: TouchEvent) => {
+      if (hasGesture) {
+        if (e.touches.length === 2 && e.cancelable) e.preventDefault(); // le pincement est géré par les gesture events
+        return;
+      }
       if (!start || e.touches.length !== 2) return;
       e.preventDefault(); // pas de défilement ni de zoom de toute l'interface
       ratio = Math.max(0.25 / scaleRef.current, Math.min(5 / scaleRef.current, dist(e.touches) / start.d));
@@ -136,8 +241,16 @@ export const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(p, ref) {
     el.addEventListener('touchend', onEnd);
     el.addEventListener('touchcancel', onEnd);
     el.addEventListener('wheel', onWheel, { passive: false });
-    el.addEventListener('gesturestart', stopGesture);
-    el.addEventListener('gesturechange', stopGesture);
+    if (hasGesture) {
+      el.addEventListener('gesturestart', gStart);
+      el.addEventListener('gesturechange', gChange);
+      el.addEventListener('gestureend', gEnd);
+    } else {
+      el.addEventListener('gesturestart', stopGesture);
+      el.addEventListener('gesturechange', stopGesture);
+    }
+    el.addEventListener('touchstart', onTapStart, { passive: true });
+    el.addEventListener('touchend', onTapEnd);
     return () => {
       el.removeEventListener('touchstart', onStart);
       el.removeEventListener('touchmove', onMove);
@@ -146,6 +259,11 @@ export const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(p, ref) {
       el.removeEventListener('wheel', onWheel);
       el.removeEventListener('gesturestart', stopGesture);
       el.removeEventListener('gesturechange', stopGesture);
+      el.removeEventListener('gesturestart', gStart);
+      el.removeEventListener('gesturechange', gChange);
+      el.removeEventListener('gestureend', gEnd);
+      el.removeEventListener('touchstart', onTapStart);
+      el.removeEventListener('touchend', onTapEnd);
     };
   }, []);
 
@@ -169,10 +287,7 @@ export const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(p, ref) {
           }
           return next;
         });
-        let best = -1;
-        let bestR = 0;
-        for (const [i, r] of ratios.current) if (r > bestR) [best, bestR] = [i, r];
-        if (best >= 0) onPageChange(best);
+        trackPage();
       },
       { root, rootMargin: '600px 0px', threshold: [0, 0.25, 0.5, 0.75, 1] },
     );

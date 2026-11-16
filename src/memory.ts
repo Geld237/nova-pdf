@@ -183,6 +183,16 @@ export interface AppSettings {
   autoLibrary: boolean;
   dyslexia: boolean;
   readingRuler: boolean;
+  /** téléphone / tablette */
+  touch: {
+    swipePanels: boolean; // glisser depuis un bord pour ouvrir les panneaux
+    swipePages: boolean; // glisser horizontalement pour changer de page
+    doubleTapZoom: boolean;
+    autoHideBars: boolean; // masquer les barres en lisant
+    toolSheet: boolean; // outils dans un bouton flottant (au lieu de la barre)
+    keepAwake: boolean; // garder l'écran allumé
+    bigButtons: boolean;
+  };
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -199,4 +209,5 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoLibrary: true,
   dyslexia: false,
   readingRuler: false,
+  touch: { swipePanels: true, swipePages: true, doubleTapZoom: true, autoHideBars: true, toolSheet: true, keepAwake: false, bigButtons: false },
 };

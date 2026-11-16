@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { ui } from '../dialogs';
 import type { PDFDocumentProxy } from '../pdf/engine';
 import {
-  allMemories, allNotes, clearAllData, exportAllData, importAllData, type AppSettings,
+  allMemories, allNotes, clearAllData, exportAllData, importAllData, type AppSettings, DEFAULT_SETTINGS,
 } from '../memory';
 import { download } from '../pdf/tools';
 import {
@@ -138,6 +138,26 @@ export function SettingsPanel({ doc, settings, setSettings, notify }: Props) {
             <input type="checkbox" checked={settings.autoCheckUpdates} onChange={(e) => set('autoCheckUpdates', e.target.checked)} />
             Vérifier les mises à jour au démarrage
           </label>
+          <h3 className="sub">Téléphone et tablette</h3>
+          {(
+            [
+              ['swipePanels', 'Glisser depuis un bord pour ouvrir les panneaux', 'Du bord gauche vers la droite : pages, sommaire, recherche. Du bord droit vers la gauche : outils, IA, notes…'],
+              ['swipePages', 'Glisser à gauche / à droite pour changer de page', 'Quand la page tient dans la largeur de l’écran.'],
+              ['doubleTapZoom', 'Toucher deux fois pour zoomer', 'Double-toucher à nouveau revient à la pleine largeur.'],
+              ['autoHideBars', 'Masquer les barres pendant la lecture', 'Elles réapparaissent en remontant ou en touchant le haut de l’écran.'],
+              ['toolSheet', 'Outils dans un bouton flottant', 'Un bouton ✎ en bas à droite ouvre tous les outils en grand.'],
+              ['keepAwake', 'Garder l’écran allumé pendant la lecture', ''],
+              ['bigButtons', 'Boutons plus grands', ''],
+            ] as [keyof AppSettings['touch'], string, string][]
+          ).map(([k, label, hint]) => (
+            <label className="check" key={k} title={hint}>
+              <input type="checkbox" checked={!!(settings.touch ?? DEFAULT_SETTINGS.touch)[k]} onChange={(e) => set('touch', { ...(settings.touch ?? DEFAULT_SETTINGS.touch), [k]: e.target.checked })} />
+              <span>
+                {label}
+                {hint && <small className="muted block">{hint}</small>}
+              </span>
+            </label>
+          ))}
           <p className="muted">Les réglages de l'IA (moteur, modèle) sont dans le panneau ✦ IA → ⚙.</p>
           <details>
             <summary>Raccourcis clavier</summary>
