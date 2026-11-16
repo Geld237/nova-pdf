@@ -45,7 +45,7 @@ jobs:
           | macOS (Apple Silicon et Intel) | \`.dmg\` |
           | Linux | \`.AppImage\`, \`.deb\` ou \`.rpm\` |
           | Android | \`.apk\` |
-          | iPhone / iPad | \`.ipa\` non signé (à signer, voir README) ou version web à ajouter à l'écran d'accueil |
+          | iPhone / iPad | Avec SideStore : source \`https://github.com/${{ github.repository }}/releases/latest/download/nova-pdf-source.json\` (mises à jour automatiques), ou version web à ajouter à l'écran d'accueil |
           | Navigateur | https://geld237.github.io/nova-pdf/ |
 
           Voir le [README](https://github.com/Geld237/nova-pdf#installer) pour les instructions d'installation."
@@ -203,6 +203,7 @@ jobs:
           mkdir -p Payload out
           cp -R build/Build/Products/Release-iphoneos/App.app Payload/
           zip -qry "out/Nova-PDF-$V-ios-unsigned.ipa" Payload
+          node scripts/make-altsource.mjs "$V" "out/Nova-PDF-$V-ios-unsigned.ipa" out/nova-pdf-source.json
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG }}

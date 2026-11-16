@@ -182,7 +182,7 @@ Toutes les versions sont sur la page **[Releases](https://github.com/Geld237/nov
 | **macOS** 11+ (Apple Silicon et Intel) | `Nova PDF_x.y.z_universal.dmg` | Glisser dans Applications. App non signée : clic droit → **Ouvrir** la première fois (ou Réglages → Confidentialité et sécurité → « Ouvrir quand même »). |
 | **Linux** | `.AppImage`, `.deb`, `.rpm` | `chmod +x *.AppImage && ./Nova*.AppImage`, ou `sudo apt install ./nova-pdf_*.deb` |
 | **Android** 7+ | `Nova-PDF-x.y.z-android.apk` | Ouvrir le fichier sur le téléphone, autoriser « installer des applis inconnues ». |
-| **iPhone / iPad** | Version web, ou `Nova-PDF-x.y.z-ios-unsigned.ipa` | Le plus simple : ouvrir l'app web dans Safari → Partager → **Sur l'écran d'accueil**. L'`.ipa` doit être signé (AltStore, Sideloadly avec un identifiant Apple gratuit, ou compte développeur pour TestFlight/App Store). |
+| **iPhone / iPad** | Version web, ou `Nova-PDF-x.y.z-ios-unsigned.ipa` | Le plus simple : ouvrir l'app web dans Safari → Partager → **Sur l'écran d'accueil**. Avec **SideStore** : **Sources → +** puis `https://github.com/Geld237/nova-pdf/releases/latest/download/nova-pdf-source.json` ; les mises à jour arrivent dans SideStore. |
 | **Navigateur** | — | https://geld237.github.io/nova-pdf/ (installable en un clic dans Chrome/Edge) |
 
 Toutes les versions partagent le même code : l'application de bureau utilise [Tauri](https://tauri.app) (≈ 5 Mo, WebView du système), les applications mobiles [Capacitor](https://capacitorjs.com). Sur ordinateur, les `.pdf` peuvent être associés à Nova PDF (double-clic, « Ouvrir avec ») ; sur Android et iOS, Nova PDF apparaît dans « Ouvrir avec / Partager ».
