@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { extractAllText, getOutline, openPdfWithPassword, type PDFDocumentProxy } from './pdf/engine';
 import { unlockPdf } from './pdf/security';
-import { isNative, isTauri, listenOpenedFiles, nativeOpenPdfs, saveFile, writeNativeFile } from './platform';
+import { isNative, isTauri, listenOpenedFiles, nativeOpenPdfs, saveFile, writeNativeFile, clickInput } from './platform';
 import { applyAnnotations } from './pdf/writer';
 import { DEFAULT_SETTINGS, appendNote, loadMemory, loadSetting, saveMemory, saveSetting, type AppSettings } from './memory';
 import { STAMP_PRESETS, makeStamp } from './stamps';
@@ -177,7 +177,7 @@ export default function App() {
   const [workspace, setWorkspace] = useState<WorkspaceKind | null>(null);
   const [signature, setSignature] = useState<string | null>(null);
   const [sigModal, setSigModal] = useState(false);
-  const [sidebar, setSidebar] = useState(true);
+  const [sidebar, setSidebar] = useState(() => typeof window === 'undefined' || window.innerWidth > 760) // sur téléphone, le panneau de gauche couvrirait la page;
   const [sideTab, setSideTab] = useState<SideTab>('pages');
   const closeSidePanels = () => {
     setPanel(null);
@@ -411,7 +411,7 @@ export default function App() {
     input.accept = 'application/pdf';
     input.multiple = true;
     input.onchange = () => input.files && openFiles(input.files);
-    input.click();
+    clickInput(input);
   }, [openFiles, loadInto]);
 
   // Applications natives : fichiers ouverts depuis le système (double-clic, « Ouvrir avec »)
@@ -1072,7 +1072,7 @@ export default function App() {
         };
         r.readAsDataURL(f);
       };
-      i.click();
+      clickInput(i);
       return;
     }
     if (t === 'edittext') notify('Cliquez sur une ligne du document pour la modifier. Entrée pour valider.');
@@ -1317,7 +1317,7 @@ export default function App() {
             annotations={doc.annotations}
             query={query}
             setQuery={setQuery}
-            goTo={goTo}
+            goTo={(pg: number) => { goTo(pg); if (window.innerWidth <= 760) setSidebar(false); }}
             onDelete={onDelete}
             tab={sideTab}
             setTab={setSideTab}
@@ -1373,6 +1373,7 @@ export default function App() {
               >
               <Viewer
                 ref={viewer}
+                onZoomBy={zoom}
                 doc={doc.pdf}
                 docKey={`${doc.id}-${doc.version}`}
                 sizes={doc.sizes}

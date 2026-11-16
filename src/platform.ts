@@ -172,3 +172,15 @@ export function interceptExternalLinks() {
     true,
   );
 }
+
+/** Ouvre le sélecteur de fichiers d'un <input type=file> créé à la volée.
+ *  Sur iPhone/iPad, un champ qui n'est pas dans la page peut être « oublié » avant d'avoir reçu
+ *  le fichier choisi : on l'ajoute donc (invisible) au document le temps du choix. */
+export function clickInput(i: HTMLInputElement) {
+  i.style.cssText = 'position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0';
+  document.body.appendChild(i);
+  const cleanup = () => setTimeout(() => i.remove(), 60_000);
+  i.addEventListener('change', cleanup, { once: true });
+  i.addEventListener('cancel', () => i.remove(), { once: true });
+  i.click();
+}

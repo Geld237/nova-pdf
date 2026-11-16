@@ -11,7 +11,7 @@ import {
   APP_COMMIT, APP_VERSION, BUILD_DATE, REPO, applyAppUpdate, checkForAppUpdate, fetchLatestCommit,
   fetchLatestRelease, isNewer, onUpdateState, updateState, checkNativeUpdate, type NativeUpdate, type ReleaseInfo, type RemoteVersion,
 } from '../update';
-import { isNative, isTauri, platformName } from '../platform';
+import { isNative, isTauri, platformName, clickInput } from '../platform';
 import { PROFILE_LABELS, loadProfile, saveProfile, type Profile } from '../profile';
 
 interface DocInfo {
@@ -441,7 +441,7 @@ function DataView({ notify }: { notify: (m: string) => void }) {
               notify(`Erreur : ${(e as Error).message}`);
             }
           };
-          i.click();
+          clickInput(i);
         }}
       >
         Restaurer une sauvegarde…

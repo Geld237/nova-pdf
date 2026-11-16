@@ -110,6 +110,10 @@ export function OrganizePanel({ ctx, big }: { ctx: DocCtx; big?: boolean }) {
           >
             {it.src >= 0 ? <Thumb doc={ctx.pdf} page={it.src} width={big ? 150 : 90} rotate={it.rotate} /> : <div className="blank">vierge</div>}
             <span>{i + 1}</span>
+            <div className="org-move" onClick={(e) => e.stopPropagation()}>
+              <button aria-label="Avancer" disabled={i === 0} onClick={() => setItems(moveItem(items, i, -1))}>‹</button>
+              <button aria-label="Reculer" disabled={i === items.length - 1} onClick={() => setItems(moveItem(items, i, 1))}>›</button>
+            </div>
           </div>
         ))}
       </div>
@@ -123,4 +127,13 @@ export function OrganizePanel({ ctx, big }: { ctx: DocCtx; big?: boolean }) {
       </div>
     </div>
   );
+}
+
+/** Déplace un élément d'un cran (boutons ‹ › sur écran tactile, où le glisser-déposer ne marche pas). */
+export function moveItem<T>(l: T[], i: number, d: -1 | 1): T[] {
+  const j = i + d;
+  if (j < 0 || j >= l.length) return l;
+  const c = [...l];
+  [c[i], c[j]] = [c[j], c[i]];
+  return c;
 }

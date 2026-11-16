@@ -1,3 +1,4 @@
+import { clickInput } from '../platform';
 import { useEffect, useState } from 'react';
 import { ui } from '../dialogs';
 import { Section } from './ToolSection';
@@ -20,7 +21,7 @@ const pick = (accept: string, multiple = true, capture = false) =>
     i.multiple = multiple;
     if (capture) i.setAttribute('capture', 'environment');
     i.onchange = () => res(Array.from(i.files ?? []));
-    i.click();
+    clickInput(i);
   });
 
 const kb = (n: number) => (n > 1048576 ? `${(n / 1048576).toFixed(2)} Mo` : `${Math.round(n / 1024)} Ko`);

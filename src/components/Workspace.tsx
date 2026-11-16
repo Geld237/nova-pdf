@@ -1,3 +1,5 @@
+import { moveItem } from './OrganizePanel';
+import { clickInput } from '../platform';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ui } from '../dialogs';
 import { Icon, type IconName } from '../icons';
@@ -198,7 +200,25 @@ function CropWS({ ctx, onDone }: { ctx: DocCtx; onDone: () => void }) {
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [img, setImg] = useState<string>('');
   const stage = useRef<HTMLDivElement>(null);
+  const center = useRef<HTMLDivElement>(null);
   const drag = useRef<{ mode: string; sx: number; sy: number; b: Box } | null>(null);
+  // la page est dimensionnée pour tenir entièrement dans la zone (téléphone en portrait compris)
+  const [fit, setFit] = useState<{ w: number; h: number } | null>(null);
+  useEffect(() => {
+    const el = center.current;
+    if (!el || !size) return;
+    const compute = () => {
+      const cs = getComputedStyle(el);
+      const aw = el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+      const ah = el.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+      const k = Math.max(0.05, Math.min(aw / size.w, ah / size.h));
+      setFit({ w: Math.floor(size.w * k), h: Math.floor(size.h * k) });
+    };
+    compute();
+    const ro = new ResizeObserver(compute);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [size]);
 
   useEffect(() => {
     let dead = false;
@@ -244,9 +264,8 @@ function CropWS({ ctx, onDone }: { ctx: DocCtx; onDone: () => void }) {
   const onMove = (e: React.PointerEvent) => {
     const d = drag.current;
     if (!d || !size || !stage.current) return;
-    const k = size.w / stage.current.clientWidth;
-    const dx = (e.clientX - d.sx) * k;
-    const dy = (e.clientY - d.sy) * k;
+    const dx = (e.clientX - d.sx) * (size.w / stage.current.clientWidth);
+    const dy = (e.clientY - d.sy) * (size.h / stage.current.clientHeight);
     let { x, y, w, h } = d.b;
     if (d.mode === 'move') {
       x = Math.min(Math.max(0, x + dx), size.w - w);
@@ -291,9 +310,9 @@ function CropWS({ ctx, onDone }: { ctx: DocCtx; onDone: () => void }) {
             </div>
           ))}
         </div>
-        <div className="crop-center" onPointerMove={onMove} onPointerUp={() => (drag.current = null)}>
+        <div ref={center} className="crop-center" onPointerMove={onMove} onPointerUp={() => (drag.current = null)} onPointerCancel={() => (drag.current = null)}>
           {size && box && (
-            <div ref={stage} className="crop-stage" style={{ aspectRatio: `${size.w} / ${size.h}` }}>
+            <div ref={stage} className="crop-stage" style={fit ? { width: fit.w, height: fit.h } : { aspectRatio: `${size.w} / ${size.h}` }}>
               {img && <img src={img} alt={`Page ${cur + 1}`} draggable={false} />}
               <div className="crop-shade" style={{ clipPath: `polygon(0 0,100% 0,100% 100%,0 100%,0 0,${pct(box.x, size.w)} ${pct(box.y, size.h)},${pct(box.x, size.w)} ${pct(box.y + box.h, size.h)},${pct(box.x + box.w, size.w)} ${pct(box.y + box.h, size.h)},${pct(box.x + box.w, size.w)} ${pct(box.y, size.h)},${pct(box.x, size.w)} ${pct(box.y, size.h)})` }} />
               <div className="crop-box" style={{ left: pct(box.x, size.w), top: pct(box.y, size.h), width: pct(box.w, size.w), height: pct(box.h, size.h) }} onPointerDown={(e) => onDown(e, 'move')}>
@@ -357,7 +376,7 @@ function MergeWS({ ctx, onDone }: { ctx: DocCtx; onDone: () => void }) {
       }
       setItems((x) => [...x, ...added]);
     };
-    i.click();
+    clickInput(i);
   };
 
   const drop = (target: string) => {
@@ -407,6 +426,10 @@ function MergeWS({ ctx, onDone }: { ctx: DocCtx; onDone: () => void }) {
               </div>
               <span className="ws-num">{k + 1}</span>
               <b className="merge-name">{it.name}</b>
+              <div className="merge-move">
+                <button aria-label="Avancer" disabled={k === 0} onClick={() => setItems(moveItem(items, k, -1))}>‹</button>
+                <button aria-label="Reculer" disabled={k === items.length - 1} onClick={() => setItems(moveItem(items, k, 1))}>›</button>
+              </div>
               <small className="muted">{it.pdf.numPages} page(s)</small>
               {it.key !== 'current' && (
                 <button className="icon remove" title="Retirer" onClick={() => setItems(items.filter((x) => x.key !== it.key))}><Icon name="close" size={14} /></button>

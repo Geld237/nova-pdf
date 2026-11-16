@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { clickInput } from '../platform';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { applyFilter, detectQuad, fileToCanvas, warp, type Quad, type ScanFilter } from '../scan';
 import { imagesToPdf } from '../pdf/tools';
+import { isCapacitor } from '../platform';
 
 /** Scanner : photo → détection des bords → coins ajustables → redressement → filtre → PDF. */
 export function ScanModal({ onDone, onClose }: { onDone: (pdf: Uint8Array) => void; onClose: () => void }) {
@@ -11,6 +13,7 @@ export function ScanModal({ onDone, onClose }: { onDone: (pdf: Uint8Array) => vo
   const [preview, setPreview] = useState<string | null>(null);
   const [camera, setCamera] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
   const video = useRef<HTMLVideoElement>(null);
   const stream = useRef<MediaStream | null>(null);
   const box = useRef<SVGSVGElement>(null);
@@ -29,20 +32,54 @@ export function ScanModal({ onDone, onClose }: { onDone: (pdf: Uint8Array) => vo
     i.type = 'file';
     i.accept = 'image/*';
     if (capture) i.setAttribute('capture', 'environment');
-    i.onchange = async () => i.files?.[0] && load(await fileToCanvas(i.files[0]));
-    i.click();
+    i.onchange = async () => {
+      const f = i.files?.[0];
+      if (!f) return;
+      try {
+        await load(await fileToCanvas(f));
+      } catch {
+        setErr('Cette photo ne peut pas être lue (format non pris en charge ?).');
+      }
+    };
+    clickInput(i);
+  };
+
+  /** Appareil photo natif (iPhone/Android) : bien plus fiable que la vidéo dans l'application. */
+  const nativePhoto = async (fromLibrary = false) => {
+    const { Camera, CameraResultType, CameraSource } = await import('@capacitor/camera');
+    const ph = await Camera.getPhoto({
+      resultType: CameraResultType.Uri,
+      source: fromLibrary ? CameraSource.Photos : CameraSource.Camera,
+      quality: 90,
+      width: 2600,
+      correctOrientation: true,
+      saveToGallery: false,
+    });
+    const blob = await (await fetch(ph.webPath!)).blob();
+    await load(await fileToCanvas(blob));
   };
 
   const startCamera = async () => {
+    setErr(null);
+    if (isCapacitor) {
+      try {
+        return await nativePhoto();
+      } catch (e) {
+        if (/cancel/i.test((e as Error).message)) return;
+        setErr(`Appareil photo indisponible : ${(e as Error).message}. Autorisez l'accès à l'appareil photo dans Réglages › Nova PDF.`);
+        return;
+      }
+    }
+    if (!navigator.mediaDevices?.getUserMedia) return pick(true);
     try {
       stream.current = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1920 } } });
       setCamera(true);
-      requestAnimationFrame(() => {
-        if (video.current) {
-          video.current.srcObject = stream.current;
-          video.current.play();
-        }
-      });
+      const attach = () => {
+        if (!video.current) return requestAnimationFrame(attach);
+        video.current.srcObject = stream.current;
+        video.current.play().catch(() => {});
+      };
+      requestAnimationFrame(attach);
     } catch {
       pick(true);
     }
@@ -50,6 +87,7 @@ export function ScanModal({ onDone, onClose }: { onDone: (pdf: Uint8Array) => vo
 
   const snap = () => {
     const v = video.current!;
+    if (!v.videoWidth) return; // la caméra n'a pas encore d'image
     const c = document.createElement('canvas');
     c.width = v.videoWidth;
     c.height = v.videoHeight;
@@ -70,6 +108,9 @@ export function ScanModal({ onDone, onClose }: { onDone: (pdf: Uint8Array) => vo
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [src, quad, filter]);
+
+  // image d'aperçu calculée une seule fois (pas à chaque mouvement de coin : trop lent sur téléphone)
+  const srcUrl = useMemo(() => src?.toDataURL('image/jpeg', 0.7) ?? '', [src]);
 
   const svgPoint = (e: React.PointerEvent) => {
     const r = box.current!.getBoundingClientRect();
@@ -103,7 +144,8 @@ export function ScanModal({ onDone, onClose }: { onDone: (pdf: Uint8Array) => vo
         {!camera && !src && (
           <div className="col">
             <button className="primary big" onClick={startCamera}>Utiliser la caméra</button>
-            <button onClick={() => pick(false)}>Choisir une photo…</button>
+            <button onClick={() => (isCapacitor ? nativePhoto(true).catch((e) => !/cancel/i.test(e.message) && setErr(e.message)) : pick(false))}>Choisir une photo…</button>
+            {err && <p className="error">{err}</p>}
             <p className="muted">Posez la feuille sur un fond contrasté. Les bords sont détectés automatiquement, vous pouvez les ajuster.</p>
           </div>
         )}
@@ -111,7 +153,7 @@ export function ScanModal({ onDone, onClose }: { onDone: (pdf: Uint8Array) => vo
         {src && quad && (
           <div className="scan-edit">
             <div className="scan-stage">
-              <img src={src.toDataURL('image/jpeg', 0.7)} alt="Photo" />
+              <img src={srcUrl} alt="Photo" />
               <svg
                 ref={box}
                 viewBox={`0 0 ${src.width} ${src.height}`}
@@ -126,8 +168,21 @@ export function ScanModal({ onDone, onClose }: { onDone: (pdf: Uint8Array) => vo
               >
                 <polygon points={quad.map((p) => p.join(',')).join(' ')} fill="rgb(61 82 213 / 0.15)" stroke="#3d52d5" strokeWidth={src.width / 300} />
                 {quad.map((p, i) => (
+                  <g key={i}>
+                  {/* zone tactile élargie autour du coin (doigt) */}
                   <circle
-                    key={i}
+                    cx={p[0]}
+                    cy={p[1]}
+                    r={Math.max(src.width, src.height) / 14}
+                    fill="transparent"
+                    style={{ cursor: 'grab', touchAction: 'none' }}
+                    onPointerDown={(e) => {
+                      drag.current = i;
+                      (e.target as Element).setPointerCapture(e.pointerId);
+                    }}
+                  />
+                  <circle
+                    pointerEvents="none"
                     cx={p[0]}
                     cy={p[1]}
                     r={src.width / 45}
@@ -140,6 +195,7 @@ export function ScanModal({ onDone, onClose }: { onDone: (pdf: Uint8Array) => vo
                       (e.target as Element).setPointerCapture(e.pointerId);
                     }}
                   />
+                  </g>
                 ))}
               </svg>
             </div>
@@ -182,7 +238,8 @@ export function ScanModal({ onDone, onClose }: { onDone: (pdf: Uint8Array) => vo
               ))}
             </div>
             <div className="row">
-              {!src && !camera && <button onClick={startCamera}>+ Page suivante</button>}
+              {!src && !camera && <button onClick={startCamera}>+ Page suivante (photo)</button>}
+              {!src && !camera && <button onClick={() => (isCapacitor ? nativePhoto(true).catch((e) => !/cancel/i.test(e.message) && setErr(e.message)) : pick(false))}>+ Depuis la galerie</button>}
               <button className="primary" disabled={busy} onClick={finish}>
                 Créer le PDF ({pages.length} page{pages.length > 1 ? 's' : ''})
               </button>

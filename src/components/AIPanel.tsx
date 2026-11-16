@@ -1,3 +1,4 @@
+import { clickInput } from '../platform';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AbortedError, aiDiagnostics, chat, lastEngine, customCpuModelName, gpuMarkedBroken, listOllamaModels, resetGpuFlag, setCustomCpuModel, CPU_MODELS, WEBLLM_MODELS, webGpuAvailable, type AiSettings, type ChatMessage } from '../ai/llm';
 import { Bm25Index, chunkPages, type Chunk } from '../ai/retrieval';
@@ -489,7 +490,7 @@ export function AIPanel(p: Props) {
                     setError(null);
                     setDiag((d) => (d ? { ...d } : d));
                   };
-                  i.click();
+                  clickInput(i);
                 }}
               >
                 Utiliser un fichier modèle .gguf de mon ordinateur…

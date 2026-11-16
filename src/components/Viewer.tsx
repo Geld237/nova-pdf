@@ -27,6 +27,8 @@ interface Props {
   onPageChange: (page: number) => void;
   refs?: Map<number, string> | null;
   ruler?: boolean;
+  /** zoom par pincement (2 doigts) ou Ctrl + molette / pincement du pavé tactile */
+  onZoomBy?: (factor: number) => void;
 }
 
 export const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(p, ref) {
@@ -50,10 +52,102 @@ export const Viewer = forwardRef<ViewerHandle, Props>(function Viewer(p, ref) {
     el.addEventListener('scroll', on, { passive: true });
     return () => el.removeEventListener('scroll', on);
   }, []);
+  // point à garder sous les doigts lors d'un zoom par pincement
+  const pinchAnchor = useRef<{ mx: number; my: number; cx: number; cy: number; s: number } | null>(null);
+  const prevScale = useRef(p.scale);
   useLayoutEffect(() => {
     const el = scroller.current;
-    if (el && anchor.current) el.scrollTop = anchor.current * el.scrollHeight;
+    const pa = pinchAnchor.current;
+    if (el && pa) {
+      const r = p.scale / pa.s;
+      el.scrollLeft = pa.cx * r - pa.mx;
+      el.scrollTop = pa.cy * r - pa.my;
+      pinchAnchor.current = null;
+    } else if (el && anchor.current) el.scrollTop = anchor.current * el.scrollHeight;
+    prevScale.current = p.scale;
   }, [p.scale]);
+
+  // ---- zoom avec deux doigts (iPhone, iPad, Android) et Ctrl + molette ----
+  const zoomBy = useRef(p.onZoomBy);
+  zoomBy.current = p.onZoomBy;
+  const scaleRef = useRef(p.scale);
+  scaleRef.current = p.scale;
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const pages = el.querySelector('.pages') as HTMLElement | null;
+    let start: { d: number; mx: number; my: number; cx: number; cy: number } | null = null;
+    let ratio = 1;
+    let last = { mx: 0, my: 0 };
+    const dist = (t: TouchList) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    const mid = (t: TouchList) => {
+      const r = el.getBoundingClientRect();
+      return { mx: (t[0].clientX + t[1].clientX) / 2 - r.left, my: (t[0].clientY + t[1].clientY) / 2 - r.top };
+    };
+    const commit = (f: number, mx: number, my: number, cx: number, cy: number) => {
+      const target = Math.max(0.25, Math.min(5, scaleRef.current * f));
+      if (Math.abs(target - scaleRef.current) < 0.01) return;
+      pinchAnchor.current = { mx, my, cx, cy, s: scaleRef.current };
+      zoomBy.current?.(target / scaleRef.current);
+    };
+    const onStart = (e: TouchEvent) => {
+      if (e.touches.length !== 2) return;
+      const m = mid(e.touches);
+      start = { d: dist(e.touches), ...m, cx: el.scrollLeft + m.mx, cy: el.scrollTop + m.my };
+      ratio = 1;
+      last = m;
+      if (pages) pages.style.transformOrigin = `${start.cx}px ${start.cy}px`;
+    };
+    const onMove = (e: TouchEvent) => {
+      if (!start || e.touches.length !== 2) return;
+      e.preventDefault(); // pas de défilement ni de zoom de toute l'interface
+      ratio = Math.max(0.25 / scaleRef.current, Math.min(5 / scaleRef.current, dist(e.touches) / start.d));
+      const m = mid(e.touches);
+      last = m;
+      // aperçu fluide pendant le geste : zoom + déplacement à deux doigts
+      if (pages) pages.style.transform = `translate(${m.mx - start.mx}px, ${m.my - start.my}px) scale(${ratio})`;
+    };
+    const onEnd = (e: TouchEvent) => {
+      if (!start || e.touches.length >= 2) return;
+      const s0 = start;
+      start = null;
+      if (pages) {
+        pages.style.transform = '';
+        pages.style.transformOrigin = '';
+      }
+      // le point de la page qui était sous les doigts se retrouve sous leur nouvelle position
+      if (Math.abs(ratio - 1) < 0.02) {
+        el.scrollLeft = s0.cx - last.mx;
+        el.scrollTop = s0.cy - last.my;
+      } else commit(ratio, last.mx, last.my, s0.cx, s0.cy);
+    };
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      const r = el.getBoundingClientRect();
+      const mx = e.clientX - r.left;
+      const my = e.clientY - r.top;
+      commit(Math.exp(-e.deltaY * 0.01), mx, my, el.scrollLeft + mx, el.scrollTop + my);
+    };
+    // Safari (Mac, iPhone) : gestes de pincement natifs → on les remplace par notre zoom
+    const stopGesture = (e: Event) => e.preventDefault();
+    el.addEventListener('touchstart', onStart, { passive: true });
+    el.addEventListener('touchmove', onMove, { passive: false });
+    el.addEventListener('touchend', onEnd);
+    el.addEventListener('touchcancel', onEnd);
+    el.addEventListener('wheel', onWheel, { passive: false });
+    el.addEventListener('gesturestart', stopGesture);
+    el.addEventListener('gesturechange', stopGesture);
+    return () => {
+      el.removeEventListener('touchstart', onStart);
+      el.removeEventListener('touchmove', onMove);
+      el.removeEventListener('touchend', onEnd);
+      el.removeEventListener('touchcancel', onEnd);
+      el.removeEventListener('wheel', onWheel);
+      el.removeEventListener('gesturestart', stopGesture);
+      el.removeEventListener('gesturechange', stopGesture);
+    };
+  }, []);
 
   useImperativeHandle(ref, () => ({
     scrollToPage,

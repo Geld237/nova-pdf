@@ -1,3 +1,4 @@
+import { clickInput } from '../platform';
 import { useEffect, useState } from 'react';
 import { ui } from '../dialogs';
 import { Section, ToolNav } from './ToolSection';
@@ -119,7 +120,7 @@ const pickFiles = (accept: string, multiple = true) =>
     i.accept = accept;
     i.multiple = multiple;
     i.onchange = () => res(Array.from(i.files ?? []));
-    i.click();
+    clickInput(i);
   });
 
 export function ToolsPanel({ ctx }: { ctx: DocCtx }) {

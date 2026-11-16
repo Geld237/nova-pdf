@@ -261,6 +261,11 @@ function PageViewImpl(p: Props) {
 
   // --- Outils de dessin ---------------------------------------------------
   const onPointerDown = (e: React.PointerEvent) => {
+    // deuxième doigt : c'est un pincement (zoom) ou un défilement à deux doigts, pas un tracé
+    if (e.pointerType === 'touch' && !e.isPrimary) {
+      setDraft(null);
+      return;
+    }
     if (!DRAW_TOOLS.includes(p.tool) || p.tool === 'eraser') return;
     const [x, y] = toPage(e);
     if (p.tool === 'move') {
@@ -591,7 +596,7 @@ function PageViewImpl(p: Props) {
       <svg
         className="ann-layer"
         viewBox={`0 0 ${p.size.w} ${p.size.h}`}
-        style={{ pointerEvents: overlayActive ? 'all' : 'none', cursor: overlayActive ? (p.tool === 'eraser' ? 'not-allowed' : 'crosshair') : undefined }}
+        style={{ pointerEvents: overlayActive ? 'all' : 'none', touchAction: overlayActive ? 'none' : undefined, cursor: overlayActive ? (p.tool === 'eraser' ? 'not-allowed' : 'crosshair') : undefined }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
