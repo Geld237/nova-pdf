@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { extractAllText, getOutline, openPdfWithPassword, type PDFDocumentProxy } from './pdf/engine';
 import { unlockPdf } from './pdf/security';
 import { isNative, isTauri, listenOpenedFiles, nativeOpenPdfs, saveFile, writeNativeFile, clickInput } from './platform';
+import { TAB_MIME, canMultiWindow, droppedOutside, dropStash, newToken, openWindow, stashDoc, takeDoc, wasTaken, closeIfSecondary } from './windows';
 import { applyAnnotations } from './pdf/writer';
 import { DEFAULT_SETTINGS, appendNote, loadMemory, loadSetting, saveMemory, saveSetting, type AppSettings } from './memory';
 import { STAMP_PRESETS, makeStamp } from './stamps';
@@ -621,9 +622,9 @@ export default function App() {
     document.body.appendChild(f);
   };
 
-  const closeDoc = async (id: string) => {
+  const closeDoc = async (id: string, force = false) => {
     const d = docsRef.current.find((x) => x.id === id);
-    if (d?.dirty && settings.confirmClose && !(await ui.confirm(`« ${d.name} » a des modifications non enregistrées (les annotations restent mémorisées). Fermer quand même ?`, { ok: 'Fermer' }))) return;
+    if (!force && d?.dirty && settings.confirmClose && !(await ui.confirm(`« ${d.name} » a des modifications non enregistrées (les annotations restent mémorisées). Fermer quand même ?`, { ok: 'Fermer' }))) return;
     d?.pdf.cleanup().catch(() => {});
     const rest = docsRef.current.filter((x) => x.id !== id);
     setDocs(rest);
@@ -631,6 +632,61 @@ export default function App() {
   };
 
   const goTo = useCallback((p: number) => viewer.current?.scrollToPage(p), []);
+
+  // ----- Plusieurs fenêtres ----------------------------------------------------
+  const transferOf = (d: DocState) => ({
+    name: d.name,
+    bytes: d.bytes,
+    path: d.path,
+    handle: d.handle,
+    annotations: d.annotations,
+    page: d.id === activeId ? page : d.startPage,
+    dirty: d.dirty,
+  });
+  /** Envoie un onglet dans une nouvelle fenêtre (move = l'onglet quitte cette fenêtre). */
+  const toNewWindow = async (id: string, o: { move?: boolean; tab?: boolean; x?: number; y?: number; token?: string } = {}) => {
+    const d = docsRef.current.find((x) => x.id === id);
+    if (!d) return;
+    const token = await stashDoc(transferOf(d), o.token);
+    const ok = await openWindow({ transfer: token }, { title: d.name, tab: o.tab, x: o.x, y: o.y });
+    if (!ok) {
+      dropStash(token);
+      notify(isTauri ? 'Impossible d’ouvrir une nouvelle fenêtre.' : 'Le navigateur a bloqué la nouvelle fenêtre : autorisez les fenêtres surgissantes pour Nova PDF.');
+      return;
+    }
+    if (o.move) moveAway(id);
+  };
+  /** l'onglet est parti dans une autre fenêtre : on le retire ; une fenêtre secondaire vide se ferme */
+  const moveAway = (id: string) => {
+    const last = docsRef.current.length === 1;
+    closeDoc(id, true);
+    if (last) setTimeout(() => closeIfSecondary(), 300);
+  };
+  const dragTab = useRef<{ id: string; token: string; handled: boolean } | null>(null);
+  const receiveTab = async (token: string) => {
+    const t = await takeDoc(token);
+    if (!t) return;
+    const newId = await loadInto(t.bytes, t.name, undefined, t.handle, t.path, { startPage: t.page, annotations: t.annotations, forceNew: true });
+    if (newId && t.dirty) setDocs((l) => l.map((x) => (x.id === newId ? { ...x, dirty: true } : x)));
+  };
+  // fenêtre ouverte pour un document précis (?transfer=… ou ?lib=…)
+  useEffect(() => {
+    const q = new URLSearchParams(location.search);
+    const tr = q.get('transfer');
+    const lib = q.get('lib');
+    if (q.has('win')) history.replaceState(null, '', location.pathname);
+    if (!tr && !lib) return;
+    history.replaceState(null, '', location.pathname);
+    if (tr) receiveTab(tr);
+    else if (lib) openFromLibrary(lib, q.get('page') ? +q.get('page')! : undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // titre de la fenêtre = document actif
+  useEffect(() => {
+    const t = doc ? `${doc.name} — Nova PDF` : 'Nova PDF';
+    document.title = t;
+    if (isTauri) import('@tauri-apps/api/window').then((m) => m.getCurrentWindow().setTitle(t)).catch(() => {});
+  }, [doc?.name]);
 
   // ----- Téléphone / tablette : gestes et confort ---------------------------
   const touchPrefs = { ...DEFAULT_SETTINGS.touch, ...(settings.touch ?? {}) };
@@ -1013,6 +1069,12 @@ export default function App() {
       items: [
         { header: item.name },
         { label: open ? 'Afficher l’onglet' : 'Ouvrir', icon: 'open', action: () => openFromLibrary(item.id) },
+        ...(canMultiWindow
+          ? [
+              { label: 'Ouvrir dans une nouvelle fenêtre', icon: 'split' as IconName, action: () => openWindow({ lib: item.id }, { title: item.name }) },
+              ...(!isTauri ? [{ label: 'Ouvrir dans un nouvel onglet du navigateur', icon: 'open' as IconName, action: () => openWindow({ lib: item.id }, { tab: true }) }] : []),
+            ]
+          : []),
         {
           label: 'Reprendre à la dernière page lue',
           icon: 'reading',
@@ -1080,6 +1142,15 @@ export default function App() {
         { label: 'Enregistrer', icon: 'save', shortcut: 'Ctrl+S', action: () => { setActiveId(id); setTimeout(() => save(), 50); } },
         { label: 'Afficher dans la bibliothèque', icon: 'library', action: () => setPanel('library') },
         { label: 'Présenter', icon: 'present', action: () => { setActiveId(id); setPresenting(true); } },
+        ...(canMultiWindow
+          ? [
+              'sep' as const,
+              { label: 'Déplacer vers une nouvelle fenêtre', icon: 'split' as IconName, action: () => toNewWindow(id, { move: true }) },
+              { label: 'Dupliquer dans une nouvelle fenêtre', icon: 'copy' as IconName, action: () => toNewWindow(id) },
+              ...(!isTauri ? [{ label: 'Ouvrir dans un nouvel onglet du navigateur', icon: 'open' as IconName, action: () => toNewWindow(id, { move: true, tab: true }) }] : []),
+              { label: 'Nouvelle fenêtre vide', icon: 'split' as IconName, action: () => openWindow({}) },
+            ]
+          : []),
         'sep',
         { label: 'Fermer', icon: 'close', action: () => closeDoc(id) },
         { label: 'Fermer les autres onglets', icon: 'close', disabled: docs.length < 2, action: () => docs.filter((x) => x.id !== id).forEach((x) => closeDoc(x.id)) },
@@ -1387,9 +1458,81 @@ export default function App() {
       </header>
 
       {docs.length > 0 && (
-        <nav className="tabs">
+        <nav
+          className="tabs"
+          onDragOver={(e) => {
+            if (!e.dataTransfer.types.includes(TAB_MIME)) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+          }}
+          onDrop={(e) => {
+            const token = e.dataTransfer.getData(TAB_MIME);
+            if (!token) return;
+            e.preventDefault();
+            if (dragTab.current?.token === token) {
+              // lâché dans sa propre fenêtre : on le place en dernier
+              dragTab.current.handled = true;
+              const id = dragTab.current.id;
+              setDocs((l) => [...l.filter((x) => x.id !== id), ...l.filter((x) => x.id === id)]);
+              return;
+            }
+            receiveTab(token); // onglet venu d'une autre fenêtre
+          }}
+        >
           {docs.map((d) => (
-            <div key={d.id} className={`tab ${d.id === activeId ? 'active' : ''}`} onClick={() => setActiveId(d.id)} onContextMenu={(e) => onTabMenu(e, d.id)} title={d.name}>
+            <div
+              key={d.id}
+              className={`tab ${d.id === activeId ? 'active' : ''}`}
+              onClick={() => setActiveId(d.id)}
+              onContextMenu={(e) => onTabMenu(e, d.id)}
+              title={canMultiWindow ? `${d.name} — faites glisser l’onglet hors de la fenêtre pour l’ouvrir dans une nouvelle fenêtre` : d.name}
+              draggable={canMultiWindow}
+              onDragStart={(e) => {
+                const token = newToken();
+                dragTab.current = { id: d.id, token, handled: false };
+                stashDoc(transferOf(d), token);
+                e.dataTransfer.setData(TAB_MIME, token);
+                e.dataTransfer.setData('text/plain', d.name);
+                e.dataTransfer.effectAllowed = 'move';
+              }}
+              onDragOver={(e) => {
+                if (dragTab.current && e.dataTransfer.types.includes(TAB_MIME)) {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'move';
+                }
+              }}
+              onDrop={(e) => {
+                const dt = dragTab.current;
+                if (!dt || e.dataTransfer.getData(TAB_MIME) !== dt.token) return;
+                // réordonner les onglets dans la même fenêtre
+                e.preventDefault();
+                e.stopPropagation();
+                dt.handled = true;
+                if (dt.id === d.id) return;
+                setDocs((l) => {
+                  const moving = l.find((x) => x.id === dt.id)!;
+                  const rest = l.filter((x) => x.id !== dt.id);
+                  const at = rest.findIndex((x) => x.id === d.id);
+                  return [...rest.slice(0, at), moving, ...rest.slice(at)];
+                });
+              }}
+              onDragEnd={(e) => {
+                const dt = dragTab.current;
+                dragTab.current = null;
+                if (!dt) return;
+                if (dt.handled) return void dropStash(dt.token);
+                const outside = droppedOutside(e);
+                const pos = { x: e.screenX, y: e.screenY };
+                const moved = e.dataTransfer.dropEffect === 'move';
+                // déposé sur la barre d'onglets d'une autre fenêtre de Nova PDF ?
+                wasTaken(dt.token, moved || outside ? 900 : 300).then((taken) => {
+                  if (taken) return void moveAway(dt.id);
+                  // lâché hors de la fenêtre : nouvelle fenêtre à cet endroit (ex. sur le 2e écran)
+                  if (outside) return void toNewWindow(dt.id, { move: true, ...pos, token: dt.token });
+                  dropStash(dt.token);
+                });
+              }}
+            >
               <span>{d.dirty ? '● ' : ''}{d.name}</span>
               <button
                 className="icon"
@@ -1403,7 +1546,22 @@ export default function App() {
               </button>
             </div>
           ))}
-          <button className="tab-add" onClick={openDialog} title="Ouvrir un autre PDF">
+          <button
+            className="tab-add"
+            onClick={openDialog}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setMenu({
+                x: e.clientX,
+                y: e.clientY,
+                items: [
+                  { label: 'Ouvrir un PDF dans un onglet…', icon: 'open', action: openDialog },
+                  ...(canMultiWindow ? [{ label: 'Nouvelle fenêtre', icon: 'split' as IconName, action: () => openWindow({}) }] : []),
+                ],
+              });
+            }}
+            title={canMultiWindow ? 'Ouvrir un autre PDF (clic droit : nouvelle fenêtre)' : 'Ouvrir un autre PDF'}
+          >
             +
           </button>
         </nav>
