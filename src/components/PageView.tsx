@@ -24,6 +24,8 @@ export interface ToolOptions {
   stampDate?: 'none' | 'date' | 'datetime';
   stampAuthor?: string;
   sigDate?: boolean; // ajouter « Signé le … » sous la signature
+  sigWidth?: number; // largeur de pose de la signature (pt)
+  stampWidth?: number; // largeur de pose du tampon (pt)
   image: string | null; // image à insérer
 }
 
@@ -314,7 +316,7 @@ function PageViewImpl(p: Props) {
         signatureWithDate(src, p.opts.stampAuthor ?? '').then((dated) => {
           const img = new Image();
           img.onload = () => {
-            const w = 190;
+            const w = (p.opts.sigWidth ?? 160) * 1.15;
             const h = (img.height / img.width) * w;
             p.onAdd({ ...base(), kind: 'image', opacity: 1, rect: { x: x - w / 2, y: y - h / 2, w, h }, dataUrl: dated });
           };
@@ -324,7 +326,7 @@ function PageViewImpl(p: Props) {
       }
       const img = new Image();
       img.onload = () => {
-        const w = p.tool === 'signature' ? 160 : p.tool === 'image' ? Math.min(240, img.width) : 170;
+        const w = p.tool === 'signature' ? p.opts.sigWidth ?? 160 : p.tool === 'image' ? Math.min(240, img.width || 240) : p.opts.stampWidth ?? 170;
         const h = (img.height / img.width) * w;
         p.onAdd({ ...base(), kind: 'image', opacity: p.tool === 'stamp' ? 0.9 : 1, rect: { x: x - w / 2, y: y - h / 2, w, h }, dataUrl: src });
       };

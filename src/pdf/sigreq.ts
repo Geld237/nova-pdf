@@ -1,3 +1,5 @@
+import { drawGraphic } from './writer';
+import { isSvgUrl, svgRatio } from '../vector';
 import { PDFDocument, PDFTextField, StandardFonts, rgb } from 'pdf-lib';
 import { sanitize } from './writer';
 
@@ -44,7 +46,8 @@ export async function markSigRequest(bytes: Uint8Array, from: string, message: s
 export async function signRequests(bytes: Uint8Array, signature: string, signerName: string, onlySigner?: string): Promise<Uint8Array> {
   const pdf = await PDFDocument.load(bytes, { ignoreEncryption: true });
   const font = await pdf.embedFont(StandardFonts.Helvetica);
-  const img = await pdf.embedPng(await fetch(signature).then((r) => r.arrayBuffer()));
+  const vector = isSvgUrl(signature);
+  const img = vector ? { width: svgRatio(signature) * 100, height: 100 } : await pdf.embedPng(await fetch(signature).then((r) => r.arrayBuffer()));
   const form = pdf.getForm();
   const pages = pdf.getPages();
   const date = new Date().toLocaleString('fr-FR', { dateStyle: 'long', timeStyle: 'short' });
@@ -58,7 +61,8 @@ export async function signRequests(bytes: Uint8Array, signature: string, signerN
       const page = pages.find((p) => pref && p.ref === pref) ?? pages[0];
       const r = w.getRectangle();
       const s = Math.min((r.width - 4) / img.width, (r.height - 12) / img.height);
-      page.drawImage(img, { x: r.x + (r.width - img.width * s) / 2, y: r.y + 10, width: img.width * s, height: img.height * s });
+      const at = { x: r.x + (r.width - img.width * s) / 2, y: r.y + 10, w: img.width * s, h: img.height * s };
+      await drawGraphic(pdf, page, signature, at); // vectoriel si la signature l'est
       page.drawText(sanitize(font, `Signé par ${signerName} le ${date}`), { x: r.x + 2, y: r.y + 2, size: 6, font, color: rgb(0.3, 0.3, 0.3) });
     }
     form.removeField(f as PDFTextField);

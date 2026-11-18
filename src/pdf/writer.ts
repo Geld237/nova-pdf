@@ -11,6 +11,7 @@ import {
   type PDFPage,
 } from 'pdf-lib';
 import type { Annotation, Rect } from '../types';
+import { dataUrlToSvg, isSvgUrl, parseSvg } from '../vector';
 import { renderPageToCanvas, canvasToBlob, type PDFDocumentProxy } from './engine';
 import { removeTextInZones } from './contentEdit';
 
@@ -212,10 +213,7 @@ export async function applyAnnotations(
         }
         case 'image': {
           if (!a.dataUrl) break;
-          const b = box(a.rect!);
-          const data = await fetch(a.dataUrl).then((r) => r.arrayBuffer());
-          const img = a.dataUrl.startsWith('data:image/png') ? await pdf.embedPng(data) : await pdf.embedJpg(data);
-          page.drawImage(img, { x: b.x, y: b.y, width: b.w, height: b.h, opacity: a.opacity });
+          await drawGraphic(pdf, page, a.dataUrl, box(a.rect!), a.opacity);
           break;
         }
         case 'note': {
@@ -305,4 +303,53 @@ function drawStyled(page: PDFPage, a: Annotation, f: PDFFont, conv: Conv, color:
       page.drawLine({ start: { x: ux1, y: uy1 }, end: { x: ux2, y: uy2 }, thickness: Math.max(0.5, size / 16), color, opacity: a.opacity });
     }
   });
+}
+
+/** Dessine une image, ou — si c'est un SVG Nova (signature, tampon, logo vectorisé) — de vrais tracés PDF vectoriels.
+ *  `b` : boîte en coordonnées PDF (origine en bas à gauche). Le SVG garde ses proportions et est centré. */
+export async function drawGraphic(pdf: PDFDocument, page: PDFPage, dataUrl: string, b: { x: number; y: number; w: number; h: number }, opacity = 1) {
+  if (isSvgUrl(dataUrl) && pathsOnlySvg(dataUrl)) {
+    const { vb, shapes } = parseSvg(dataUrl);
+    const s = Math.min(b.w / vb[2], b.h / vb[3]);
+    const ox = b.x + (b.w - vb[2] * s) / 2 - vb[0] * s;
+    const oy = b.y + b.h - (b.h - vb[3] * s) / 2 + vb[1] * s; // haut de la zone (drawSvgPath : y vers le bas)
+    for (const sh of shapes) {
+      page.drawSvgPath(sh.d, {
+        x: ox,
+        y: oy,
+        scale: s,
+        color: sh.fill ? hexToRgb(sh.fill) : undefined,
+        borderColor: sh.stroke ? hexToRgb(sh.stroke) : undefined,
+        borderWidth: sh.stroke ? sh.strokeWidth * s : undefined,
+        opacity: opacity * sh.opacity,
+        borderOpacity: opacity * sh.opacity,
+      });
+    }
+    return;
+  }
+  if (!/^data:image\/(png|jpe?g)/.test(dataUrl)) dataUrl = await rasterize(dataUrl, b); // SVG quelconque, WebP… → PNG haute définition
+  const data = await fetch(dataUrl).then((r) => r.arrayBuffer());
+  const img = dataUrl.startsWith('data:image/png') ? await pdf.embedPng(data) : await pdf.embedJpg(data);
+  page.drawImage(img, { x: b.x, y: b.y, width: b.w, height: b.h, opacity });
+}
+
+/** SVG composé uniquement de chemins (ceux de Nova) : converti en tracés PDF. Les autres SVG sont rendus en image fine. */
+function pathsOnlySvg(url: string) {
+  const d = new DOMParser().parseFromString(dataUrlToSvg(url), 'image/svg+xml');
+  return [...d.documentElement.querySelectorAll('*')].every((el) => ['path', 'g', 'title', 'desc'].includes(el.tagName.toLowerCase()));
+}
+
+async function rasterize(url: string, b: { w: number; h: number }) {
+  const img = await new Promise<HTMLImageElement>((res, rej) => {
+    const i = new Image();
+    i.onload = () => res(i);
+    i.onerror = () => rej(new Error('Image illisible'));
+    i.src = url;
+  });
+  const k = Math.max(1, (300 / 72) * Math.max(b.w / (img.width || b.w), b.h / (img.height || b.h))); // ~300 dpi
+  const c = document.createElement('canvas');
+  c.width = Math.min(6000, Math.round((img.width || b.w) * k));
+  c.height = Math.min(6000, Math.round((img.height || b.h) * k));
+  c.getContext('2d')!.drawImage(img, 0, 0, c.width, c.height);
+  return c.toDataURL('image/png');
 }

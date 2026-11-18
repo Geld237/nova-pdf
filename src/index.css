@@ -913,3 +913,28 @@ html, body { overscroll-behavior: none; } /* pas de « retour arrière » ni de 
   .sheet-tool { min-width: 0; }
   .sheet-tool small { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; max-width: 100%; }
 }
+
+/* ---- Signature vectorielle ---- */
+.sig-modal { width: min(700px, 96vw); }
+.sig-tabs { display: flex; background: var(--panel-2); border-radius: 9px; padding: 2px; gap: 2px; }
+.sig-tabs button { flex: 1; border: none; background: transparent; border-radius: 7px; padding: 6px; color: var(--text); cursor: pointer; }
+.sig-tabs button.active { background: var(--panel); box-shadow: 0 1px 2px rgb(0 0 0/.15); font-weight: 600; }
+.sig-ink-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+svg.sig-pad { width: 100%; height: auto; aspect-ratio: 640 / 220; background: #fff; border: 1px solid var(--border); border-radius: 12px; cursor: crosshair; display: block; }
+.sig-baseline { stroke: #c7c7cc; stroke-width: 1.5; stroke-dasharray: 6 6; }
+.sig-hint { fill: #aeaeb2; font-size: 18px; pointer-events: none; }
+.sig-fonts { display: flex; gap: 8px; }
+.sig-font { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; border: 1px solid var(--border); background: var(--panel); border-radius: 10px; padding: 6px; cursor: pointer; color: var(--text); }
+.sig-font span { font-size: 26px; line-height: 1.2; white-space: nowrap; overflow: hidden; max-width: 100%; }
+.sig-font.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.sig-preview { min-height: 90px; display: grid; place-items: center; background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 10px; }
+.sig-preview img { max-width: 100%; max-height: 140px; }
+.sig-preview.checker { background: repeating-conic-gradient(#f2f2f7 0 25%, #fff 0 50%) 0 0 / 16px 16px; }
+.saved-sig .dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; }
+.saved-sig img { background: #fff; }
+.file-btn { display: inline-flex; align-items: center; justify-content: center; padding: 8px 14px; border-radius: 9px; background: var(--accent); color: #fff; cursor: pointer; width: fit-content; }
+.sig-chip { height: 26px; max-width: 90px; background: #fff; border: 1px solid var(--border); border-radius: 6px; padding: 2px 4px; cursor: pointer; object-fit: contain; }
+.size-opt { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); }
+.size-opt input { width: 90px; }
+.size-opt output { min-width: 42px; font-variant-numeric: tabular-nums; }
+.ai-vectorize { border: 1px dashed var(--accent); color: var(--accent); background: transparent; border-radius: 8px; padding: 6px; cursor: pointer; }

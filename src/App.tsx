@@ -135,6 +135,8 @@ export default function App() {
     stampDate: (localStorage.getItem('nova:stamp-date') as 'none' | 'date' | 'datetime') || 'date',
     stampAuthor: localStorage.getItem('nova:stamp-author') ?? '',
     sigDate: localStorage.getItem('nova:sig-date') === '1',
+    sigWidth: +(localStorage.getItem('nova:sig-width') ?? 160),
+    stampWidth: +(localStorage.getItem('nova:stamp-width') ?? 170),
     image: null,
     signer: '',
   }));
@@ -1234,7 +1236,7 @@ export default function App() {
     if (t === 'image') {
       const i = document.createElement('input');
       i.type = 'file';
-      i.accept = 'image/png,image/jpeg';
+      i.accept = 'image/png,image/jpeg,image/webp,image/svg+xml';
       i.onchange = () => {
         const f = i.files?.[0];
         if (!f) return;
@@ -1344,6 +1346,12 @@ export default function App() {
             )}
             {tool === 'signature' && (
               <div className="tool-opts">
+                {signature && <img className="sig-chip" src={signature} alt="Signature" title="Changer de signature" onClick={() => setSigModal(true)} />}
+                <label className="size-opt" title="Largeur de la signature posée">
+                  Taille
+                  <input type="range" min={60} max={360} step={10} value={opts.sigWidth ?? 160} onChange={(e) => { localStorage.setItem('nova:sig-width', e.target.value); setOpts({ ...opts, sigWidth: +e.target.value }); }} />
+                  <output>{Math.round(((opts.sigWidth ?? 160) * 25.4) / 72)} mm</output>
+                </label>
                 <label className="check" title="Ajoute « Signé le … à … » sous la signature, à l'heure exacte de la pose">
                   <input
                     type="checkbox"
@@ -1391,6 +1399,11 @@ export default function App() {
                 >
                   Personnalisé…
                 </button>
+                <label className="size-opt" title="Largeur du tampon posé">
+                  Taille
+                  <input type="range" min={80} max={360} step={10} value={opts.stampWidth ?? 170} onChange={(e) => { localStorage.setItem('nova:stamp-width', e.target.value); setOpts({ ...opts, stampWidth: +e.target.value }); }} />
+                  <output>{Math.round(((opts.stampWidth ?? 170) * 25.4) / 72)} mm</output>
+                </label>
                 <select
                   value={opts.stampDate}
                   title="Date sur le tampon (mise à jour à chaque pose)"

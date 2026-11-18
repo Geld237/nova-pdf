@@ -1,6 +1,8 @@
 import { useEffect, useRef } from 'react';
 import type { Annotation } from '../types';
 import { ColorPicker } from './ColorPicker';
+import { ui } from '../dialogs';
+import { isSvgUrl, recolorSvg, svgRatio, svgToDataUrl, traceToSvg } from '../vector';
 import { TextStyleBar, measureText } from './TextStyleBar';
 
 /* Petit inspecteur flottant : modifier une annotation déjà posée (couleur, épaisseur, opacité, texte…). */
@@ -54,7 +56,7 @@ export function AnnInspector({ ann: a, pos, onChange, onDelete, onDuplicate, onF
   return (
     <div ref={ref} className="ann-inspector" style={{ left, top, width: W }} role="dialog" aria-label="Modifier l’annotation">
       <div className="ai-head">
-        <b>{KIND_LABEL[a.kind] ?? 'Annotation'}</b>
+        <b>{a.kind === 'image' && isSvgUrl(a.dataUrl) ? 'Signature / tampon' : KIND_LABEL[a.kind] ?? 'Annotation'}</b>
         <button className="icon-btn" onClick={onClose} title="Fermer">✕</button>
       </div>
 
@@ -82,6 +84,54 @@ export function AnnInspector({ ann: a, pos, onChange, onDelete, onDuplicate, onF
         )
       )}
 
+      {a.kind === 'image' && a.rect && (
+        <>
+          <label className="ai-row">
+            <span>Largeur</span>
+            <input
+              type="range"
+              min={20}
+              max={560}
+              step={2}
+              value={Math.round(a.rect.w)}
+              onChange={(e) => {
+                const w = +e.target.value;
+                const k = w / a.rect!.w;
+                onChange({ ...a, rect: { ...a.rect!, w, h: a.rect!.h * k } });
+              }}
+            />
+            <output>{Math.round((a.rect.w * 25.4) / 72)} mm</output>
+          </label>
+          {isSvgUrl(a.dataUrl) ? (
+            <div className="ai-row">
+              <span>Encre</span>
+              <div className="ai-swatches">
+                {['#1a3a8f', '#111111', '#0b5d3b', '#8e1b1b', '#e53935'].map((c) => (
+                  <button key={c} className="acc" style={{ background: c }} title={c} onClick={() => onChange({ ...a, dataUrl: recolorSvg(a.dataUrl!, c) })} />
+                ))}
+                <ColorPicker value={null} onChange={(c) => c && onChange({ ...a, dataUrl: recolorSvg(a.dataUrl!, c) })} title="Autre couleur" />
+              </div>
+              <small className="muted">vectoriel ✓</small>
+            </div>
+          ) : (
+            <button
+              className="ai-vectorize"
+              title="Pour une signature, un tampon ou un logo : fond supprimé, tracé net à toutes les tailles"
+              onClick={async () => {
+                try {
+                  const svg = svgToDataUrl(await traceToSvg(a.dataUrl!, null));
+                  const r = svgRatio(svg);
+                  onChange({ ...a, dataUrl: svg, rect: { ...a.rect!, h: a.rect!.w / r } });
+                } catch (e) {
+                  ui.alert((e as Error).message);
+                }
+              }}
+            >
+              ✦ Vectoriser (signature, tampon, logo)
+            </button>
+          )}
+        </>
+      )}
       {STROKED.includes(a.kind) && (
         <label className="ai-row">
           <span>Épaisseur</span>

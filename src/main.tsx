@@ -8,6 +8,7 @@ import { interceptExternalLinks, isNative } from './platform'
 
 initUpdates()
 import('./fonts').then((m) => m.initFonts())
+import('./vector').then((m) => m.preloadStampFonts())
 // Diagnostic de l'IA accessible depuis la console (aide au dépannage)
 ;(window as unknown as { __novaDiag?: () => Promise<unknown> }).__novaDiag = async () => {
   const llm = await import('./ai/llm')

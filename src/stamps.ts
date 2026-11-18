@@ -1,3 +1,4 @@
+import { isSvgUrl, stampSvg, svgSignatureWithCaption, svgToDataUrl } from './vector';
 /** Tampons prêts à l'emploi, dessinés en image (PNG) pour être placés sur la page. */
 export const STAMP_PRESETS: { label: string; color: string }[] = [
   { label: 'APPROUVÉ', color: '#2e7d32' },
@@ -21,6 +22,9 @@ const stampWhen = (mode: StampDate, d = new Date()) =>
 export function makeStamp(label: string, color: string, withDate: boolean | StampDate = true, author = ''): string {
   const mode: StampDate = withDate === true ? 'date' : withDate === false ? 'none' : withDate;
   const line2 = [stampWhen(mode), author.trim()].filter(Boolean).join(' — ');
+  // version vectorielle (nette à tous les zooms et dans le PDF) dès que la police est chargée
+  const svg = stampSvg(label, color, line2);
+  if (svg) return svgToDataUrl(svg);
   const c = document.createElement('canvas');
   const g = c.getContext('2d')!;
   const font = 'bold 54px Helvetica, Arial, sans-serif';
@@ -55,6 +59,11 @@ export function makeStamp(label: string, color: string, withDate: boolean | Stam
 
 /** Ajoute « Signé le … à … (par …) » sous une image de signature. */
 export function signatureWithDate(src: string, who = '', mode: StampDate = 'datetime'): Promise<string> {
+  if (isSvgUrl(src)) {
+    const d = new Date();
+    const when = mode === 'date' ? `le ${d.toLocaleDateString('fr-FR')}` : `le ${d.toLocaleDateString('fr-FR')} à ${d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`;
+    return svgSignatureWithCaption(src, `Signé ${who.trim() ? `par ${who.trim()} ` : ''}${when}`).catch(() => src);
+  }
   return new Promise((res) => {
     const img = new Image();
     img.onload = () => {
