@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PDFDocumentProxy } from '../pdf/engine';
-import { isTauri } from '../platform';
 import type { Annotation } from '../types';
-import { PRESENT_CHANNEL, type PresentMsg } from './Audience';
+import type { PresentMsg } from './Audience';
+import { closeAudience, hasSecondScreen, listScreens, moveAudience, openAudience, openChannel, putPresentDoc, type Channel, type ScreenInfo } from '../present';
 
 interface Props {
   pdf: PDFDocumentProxy;
@@ -15,22 +15,6 @@ interface Props {
 }
 
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.abs(s) % 60).padStart(2, '0')}`;
-
-/** Ouvre la fenêtre « public » (2e écran). */
-async function openAudienceWindow(): Promise<boolean> {
-  const url = `${location.origin}${location.pathname}?audience=1`;
-  if (isTauri) {
-    try {
-      const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-      const w = new WebviewWindow('audience', { url: 'index.html?audience=1', title: 'Nova PDF — Présentation', width: 1280, height: 720 });
-      w.once('tauri://error', () => {});
-      return true;
-    } catch {
-      return false;
-    }
-  }
-  return !!window.open(url, 'nova-audience', 'popup,width=1280,height=720');
-}
 
 /** Mode présentation : plein écran, pointeur laser, dessin éphémère, écran noir/blanc, chronomètre,
  *  et vue présentateur (diapo suivante, notes, minuteur) avec l'affichage public sur un deuxième écran. */
@@ -53,7 +37,10 @@ export function Presentation({ pdf, start, onExit, bytes, fingerprint, annotatio
   const nextCanvas = useRef<HTMLCanvasElement>(null);
   const stage = useRef<HTMLDivElement>(null);
   const drawing = useRef(false);
-  const chan = useRef<BroadcastChannel | null>(null);
+  const chan = useRef<Channel | null>(null);
+  const [screens, setScreens] = useState<ScreenInfo[]>([]);
+  const [audScreen, setAudScreen] = useState<ScreenInfo | null>(null);
+  const [grid, setGrid] = useState(false);
   const switching = useRef(false);
   const n = pdf.numPages;
 
@@ -75,31 +62,59 @@ export function Presentation({ pdf, start, onExit, bytes, fingerprint, annotatio
   }, [presenter, page, onExit]);
 
   // ---- vue présentateur : canal vers la fenêtre public ----
-  const startPresenter = async () => {
-    if (presenter) return;
+  /** Vue présentateur (comme PowerPoint) : diapositives en plein écran sur l'autre écran, console ici. */
+  const startPresenter = async (ask = true) => {
+    if (presenter || !bytes) return;
     switching.current = true;
-    const ch = new BroadcastChannel(PRESENT_CHANNEL);
+    await putPresentDoc(bytes);
+    const ch = openChannel((raw) => {
+      const m = raw as PresentMsg;
+      if (m.type === 'ready') ch.post({ type: 'doc' } satisfies PresentMsg);
+      else if (m.type === 'key') keyRef.current(m.key);
+    });
     chan.current = ch;
-    ch.onmessage = (e: MessageEvent<PresentMsg>) => {
-      if (e.data.type === 'ready' && bytes) ch.postMessage({ type: 'doc', bytes } satisfies PresentMsg);
-    };
-    if (document.fullscreenElement) await document.exitFullscreen().catch(() => {});
-    const ok = await openAudienceWindow();
+    const scr = await listScreens(ask);
+    setScreens(scr);
+    // écran du public : un autre que celui de cette fenêtre (de préférence pas l'écran principal)
+    const other = scr.find((x) => !x.current && !x.primary) ?? scr.find((x) => !x.current) ?? null;
+    setAudScreen(other);
+    const ok = await openAudience(other);
     setPresenter(true);
     setT0(Date.now());
     if (!ok) alertOnce();
+    // la console reste en plein écran sur l'écran principal
+    if (!document.fullscreenElement) root.current?.requestFullscreen?.().catch(() => {});
+    setTimeout(() => (switching.current = false), 800);
+  };
+  // deux écrans branchés → vue présentateur automatiquement (réglable)
+  useEffect(() => {
+    if (!bytes || localStorage.getItem('nova:presenter-auto') === '0') return;
+    hasSecondScreen().then((two) => {
+      if (two) startPresenter(false);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const switchScreen = async () => {
+    const list = screens.length > 1 ? screens : await listScreens(true);
+    setScreens(list);
+    if (list.length < 2) return;
+    const i = audScreen ? list.findIndex((x) => x.id === audScreen.id) : -1;
+    const next = list[(i + 1) % list.length];
+    setAudScreen(next);
+    await moveAudience(next);
   };
   const [popupBlocked, setPopupBlocked] = useState(false);
   const alertOnce = () => setPopupBlocked(true);
   useEffect(
     () => () => {
-      chan.current?.postMessage({ type: 'close' } satisfies PresentMsg);
+      chan.current?.post({ type: 'close' } satisfies PresentMsg);
       chan.current?.close();
+      closeAudience();
     },
     [],
   );
   useEffect(() => {
-    chan.current?.postMessage({ type: 'state', page, blank, laser: laser ? rpos : null, ink: ink[page] ?? [] } satisfies PresentMsg);
+    chan.current?.post({ type: 'state', page, blank, laser: laser ? rpos : null, ink: ink[page] ?? [] } satisfies PresentMsg);
   }, [page, blank, laser, rpos, ink, presenter]);
 
   // notes de l'orateur : enregistrées par page, préremplies avec les notes posées sur la page
@@ -157,27 +172,38 @@ export function Presentation({ pdf, start, onExit, bytes, fingerprint, annotatio
     };
   }, [page, pdf, presenter, n]);
 
+  // touches : clavier de cette fenêtre OU de la fenêtre public (télécommande de présentation)
+  const keyRef = useRef<(key: string) => boolean>(() => false);
+  keyRef.current = (raw: string) => {
+    const key = raw.toLowerCase();
+    if (grid && key === 'escape') {
+      setGrid(false);
+      return true;
+    }
+    if (['arrowright', 'arrowdown', 'pagedown', ' ', 'enter', 'n'].includes(key)) go(page + 1);
+    else if (['arrowleft', 'arrowup', 'pageup', 'backspace', 'p'].includes(key)) go(page - 1);
+    else if (key === 'home') go(0);
+    else if (key === 'end') go(n - 1);
+    else if (key === 'escape') onExit(page);
+    else if (key === 'l') { setLaser((x) => !x); setDraw(false); }
+    else if (key === 'd') { setDraw((x) => !x); setLaser(false); }
+    else if (key === 'e') setInk((x) => ({ ...x, [page]: [] }));
+    else if (key === 'b' || key === '.') setBlank((b) => (b === 'black' ? null : 'black'));
+    else if (key === 'w' || key === ',') setBlank((b) => (b === 'white' ? null : 'white'));
+    else if (key === 'h') setHud((h) => !h);
+    else if (key === 'v') startPresenter();
+    else if (key === 'g' || key === '-') setGrid((g) => !g);
+    else return false;
+    return true;
+  };
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement).closest('textarea, input')) return;
-      const key = e.key.toLowerCase();
-      if (['arrowright', 'arrowdown', 'pagedown', ' ', 'enter', 'n'].includes(key)) { e.preventDefault(); go(page + 1); }
-      else if (['arrowleft', 'arrowup', 'pageup', 'backspace', 'p'].includes(key)) { e.preventDefault(); go(page - 1); }
-      else if (key === 'home') go(0);
-      else if (key === 'end') go(n - 1);
-      else if (key === 'escape') onExit(page);
-      else if (key === 'l') { setLaser((x) => !x); setDraw(false); }
-      else if (key === 'd') { setDraw((x) => !x); setLaser(false); }
-      else if (key === 'e') setInk((x) => ({ ...x, [page]: [] }));
-      else if (key === 'b' || key === '.') setBlank((b) => (b === 'black' ? null : 'black'));
-      else if (key === 'w' || key === ',') setBlank((b) => (b === 'white' ? null : 'white'));
-      else if (key === 'h') setHud((h) => !h);
-      else if (key === 'v') startPresenter();
+      if ((e.target as HTMLElement).closest('textarea, input, select')) return;
+      if (keyRef.current(e.key)) e.preventDefault();
     };
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, go, n, onExit]);
+  }, []);
 
   const rel = (e: React.PointerEvent) => {
     const r = canvas.current!.getBoundingClientRect();
@@ -299,25 +325,86 @@ export function Presentation({ pdf, start, onExit, bytes, fingerprint, annotatio
           </div>
           {popupBlocked && (
             <p className="pv-warn">
-              La fenêtre du public n’a pas pu s’ouvrir (fenêtres surgissantes bloquées ?). <button onClick={() => openAudienceWindow().then((ok) => setPopupBlocked(!ok))}>Réessayer</button>
+              La fenêtre du public n’a pas pu s’ouvrir (fenêtres surgissantes bloquées ?). <button onClick={() => openAudience(audScreen).then((ok) => setPopupBlocked(!ok))}>Réessayer</button>
             </p>
           )}
-          <small className="muted">Faites glisser la fenêtre « Présentation » sur l’écran du public, puis double-cliquez dedans pour le plein écran.</small>
+          <div className="pv-row">
+            <button onClick={switchScreen} title="Afficher les diapositives sur un autre écran">🖥 Changer d’écran</button>
+            <button onClick={() => setGrid(true)} title="Voir toutes les diapositives (G)">▦ Toutes les diapositives</button>
+          </div>
+          <label className="check pv-auto">
+            <input type="checkbox" defaultChecked={localStorage.getItem('nova:presenter-auto') !== '0'} onChange={(e) => localStorage.setItem('nova:presenter-auto', e.target.checked ? '1' : '0')} />
+            Vue présentateur automatique quand un 2e écran est branché
+          </label>
+          <small className="muted">
+            {audScreen ? `Public : ${audScreen.label}. ` : 'Si la fenêtre « Présentation » n’est pas sur l’écran du public, utilisez « Changer d’écran ». '}
+            Une télécommande ou le clavier fonctionnent sur les deux écrans.
+          </small>
         </aside>
+        {grid && <SlideGrid pdf={pdf} current={page} onPick={(i) => { go(i); setGrid(false); }} onClose={() => setGrid(false)} />}
       </div>
     );
 
   return (
     <div ref={root} className="presentation">
       {slide}
+      {grid && <SlideGrid pdf={pdf} current={page} onPick={(i) => { go(i); setGrid(false); }} onClose={() => setGrid(false)} />}
       {hud && (
         <div className="pres-hud">
           {tools}
           <span>⏱ {fmt(elapsed)}</span>
-          {bytes && <button onClick={startPresenter} title="Vue présentateur sur cet écran, diapositives sur le 2e écran (V)">🖥 Présentateur</button>}
+          {bytes && <button onClick={() => startPresenter()} title="Vue présentateur sur cet écran, diapositives sur le 2e écran (V)">🖥 Présentateur</button>}
           <button onClick={() => onExit(page)} title="Quitter (Échap)">✕</button>
         </div>
       )}
     </div>
+  );
+}
+
+/** Toutes les diapositives en vignettes (touche G), pour sauter directement à l'une d'elles. */
+function SlideGrid({ pdf, current, onPick, onClose }: { pdf: PDFDocumentProxy; current: number; onPick: (i: number) => void; onClose: () => void }) {
+  return (
+    <div className="slide-grid" onClick={onClose}>
+      <div className="sg-inner" onClick={(e) => e.stopPropagation()}>
+        <header>
+          <b>Toutes les diapositives</b>
+          <button onClick={onClose}>Fermer (Échap)</button>
+        </header>
+        <div className="sg-list">
+          {Array.from({ length: pdf.numPages }, (_, i) => (
+            <SlideThumb key={i} pdf={pdf} i={i} active={i === current} onPick={() => onPick(i)} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SlideThumb({ pdf, i, active, onPick }: { pdf: PDFDocumentProxy; i: number; active: boolean; onPick: () => void }) {
+  const c = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    let task: { cancel: () => void; promise: Promise<unknown> } | null = null;
+    const io = new IntersectionObserver(async ([e]) => {
+      if (!e.isIntersecting || !c.current) return;
+      io.disconnect();
+      const pg = await pdf.getPage(i + 1);
+      const vp = pg.getViewport({ scale: 220 / pg.getViewport({ scale: 1 }).width });
+      c.current.width = vp.width;
+      c.current.height = vp.height;
+      task = pg.render({ canvas: c.current, viewport: vp });
+      task.promise.catch(() => {});
+    });
+    if (c.current) io.observe(c.current);
+    if (active) c.current?.scrollIntoView({ block: 'center' });
+    return () => {
+      io.disconnect();
+      task?.cancel();
+    };
+  }, [pdf, i, active]);
+  return (
+    <button className={`sg-item ${active ? 'active' : ''}`} onClick={onPick}>
+      <canvas ref={c} />
+      <span>{i + 1}</span>
+    </button>
   );
 }
