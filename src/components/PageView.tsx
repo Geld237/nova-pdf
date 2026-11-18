@@ -79,7 +79,51 @@ function PageViewImpl(p: Props) {
   const [rendered, setRendered] = useState(false);
   const items = useRef<TextItem[]>([]);
   const [textEdit, setTextEdit] = useState<{ rect: Rect; text: string; size: number; family: FontFam; bold: boolean; italic?: boolean; underline?: boolean; align?: TextAlign; color: string; bg: string; original: string; replaceId?: string } | null>(null);
-  const [drag, setDrag] = useState<{ id: string; mode: 'move' | 'resize'; sx: number; sy: number; orig: Annotation; cur: Annotation } | null>(null);
+  const [drag, setDrag] = useState<{ id: string; mode: 'move' | 'resize' | 'corner'; corner?: Corner; sx: number; sy: number; orig: Annotation; cur: Annotation } | null>(null);
+  // signature / tampon / image sélectionné(e) : cadre avec poignées pour déplacer et redimensionner directement
+  const [sel, setSel] = useState<string | null>(null);
+  const grabbable = GRAB_TOOLS.includes(p.tool);
+  useEffect(() => {
+    if (!grabbable) setSel(null);
+  }, [grabbable]);
+  useEffect(() => {
+    const on = (e: Event) => {
+      const d = (e as CustomEvent).detail as { id: string; page: number };
+      setSel(d.page === p.pageIndex ? d.id : null);
+    };
+    window.addEventListener('nova:grab-select', on);
+    return () => window.removeEventListener('nova:grab-select', on);
+  }, [p.pageIndex]);
+  useEffect(() => {
+    if (!sel) return;
+    // clic ailleurs : on désélectionne
+    const down = (e: PointerEvent) => {
+      const t = e.target as Element;
+      if (t.closest?.(`[data-grab="${sel}"], [data-handle], .grab-bar, .ann-inspector, .color-pop, .ctx-menu, .dialog`)) return;
+      setSel(null);
+    };
+    const key = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement).closest('input, textarea, select, [contenteditable]')) return;
+      const a = p.annotations.find((x) => x.id === sel);
+      if (!a) return;
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        p.onDelete(sel);
+        setSel(null);
+      } else if (e.key === 'Escape') setSel(null);
+      else if (e.key.startsWith('Arrow')) {
+        e.preventDefault();
+        const st = e.shiftKey ? 10 : 1;
+        p.onUpdate(moveAnn(a, e.key === 'ArrowLeft' ? -st : e.key === 'ArrowRight' ? st : 0, e.key === 'ArrowUp' ? -st : e.key === 'ArrowDown' ? st : 0));
+      }
+    };
+    window.addEventListener('pointerdown', down, true);
+    window.addEventListener('keydown', key, true);
+    return () => {
+      window.removeEventListener('pointerdown', down, true);
+      window.removeEventListener('keydown', key, true);
+    };
+  }, [sel, p.annotations, p.onDelete, p.onUpdate]);
   const [hoverBlock, setHoverBlock] = useState<Rect | null>(null);
   const [refTip, setRefTip] = useState<{ x: number; y: number; items: [number, string][] } | null>(null);
 
@@ -268,6 +312,30 @@ function PageViewImpl(p: Props) {
       setDraft(null);
       return;
     }
+    // clic droit ou molette : jamais de pose ni de tracé (le menu contextuel s'affiche)
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    // poignée d'une signature / image sélectionnée → redimensionner ; la signature elle-même → déplacer
+    const tgt = e.target as Element;
+    const corner = tgt.closest?.('[data-handle]')?.getAttribute('data-handle') as Corner | null;
+    const grabId = tgt.closest?.('[data-grab]')?.getAttribute('data-grab');
+    if ((corner && sel) || (grabId && grabbable)) {
+      const id = corner ? sel! : grabId!;
+      const a = p.annotations.find((x) => x.id === id);
+      if (a) {
+        e.preventDefault();
+        e.stopPropagation();
+        const [x, y] = toPage(e);
+        setSel(id);
+        (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+        setDrag({ id, mode: corner ? 'corner' : 'move', corner: corner ?? undefined, sx: x, sy: y, orig: a, cur: a });
+        return;
+      }
+    }
+    if (sel) {
+      // un clic à côté d'une signature sélectionnée la désélectionne seulement (pas de nouvelle signature par erreur)
+      setSel(null);
+      if (p.tool === 'signature' || p.tool === 'stamp' || p.tool === 'image') return;
+    }
     if (!DRAW_TOOLS.includes(p.tool) || p.tool === 'eraser') return;
     const [x, y] = toPage(e);
     if (p.tool === 'move') {
@@ -318,7 +386,9 @@ function PageViewImpl(p: Props) {
           img.onload = () => {
             const w = (p.opts.sigWidth ?? 160) * 1.15;
             const h = (img.height / img.width) * w;
-            p.onAdd({ ...base(), kind: 'image', opacity: 1, rect: { x: x - w / 2, y: y - h / 2, w, h }, dataUrl: dated });
+            const n: Annotation = { ...base(), kind: 'image', opacity: 1, rect: { x: x - w / 2, y: y - h / 2, w, h }, dataUrl: dated };
+            p.onAdd(n);
+            placed(n.id);
           };
           img.src = dated;
         });
@@ -328,7 +398,9 @@ function PageViewImpl(p: Props) {
       img.onload = () => {
         const w = p.tool === 'signature' ? p.opts.sigWidth ?? 160 : p.tool === 'image' ? Math.min(240, img.width || 240) : p.opts.stampWidth ?? 170;
         const h = (img.height / img.width) * w;
-        p.onAdd({ ...base(), kind: 'image', opacity: p.tool === 'stamp' ? 0.9 : 1, rect: { x: x - w / 2, y: y - h / 2, w, h }, dataUrl: src });
+        const n: Annotation = { ...base(), kind: 'image', opacity: p.tool === 'stamp' ? 0.9 : 1, rect: { x: x - w / 2, y: y - h / 2, w, h }, dataUrl: src };
+        p.onAdd(n);
+        placed(n.id);
       };
       img.src = src;
       return;
@@ -346,10 +418,24 @@ function PageViewImpl(p: Props) {
     else setDraft({ ...b, kind: p.tool as 'rect' | 'ellipse', rect: { x, y, w: 0, h: 0 } });
   };
 
+  /** après la pose : la signature est sélectionnée (poignées) et on revient à l'outil de lecture */
+  const placed = (id: string) => {
+    window.dispatchEvent(new CustomEvent('nova:tool-done'));
+    setTimeout(() => window.dispatchEvent(new CustomEvent('nova:grab-select', { detail: { id, page: p.pageIndex } })), 30);
+  };
+
   const onPointerMove = (e: React.PointerEvent) => {
     if (drag) {
       const [x, y] = toPage(e);
-      setDrag({ ...drag, cur: drag.mode === 'move' ? moveAnn(drag.orig, x - drag.sx, y - drag.sy) : resizeAnn(drag.orig, x - drag.sx, y - drag.sy) });
+      setDrag({
+        ...drag,
+        cur:
+          drag.mode === 'move'
+            ? moveAnn(drag.orig, x - drag.sx, y - drag.sy)
+            : drag.mode === 'corner'
+              ? resizeCorner(drag.orig, drag.corner!, x, y)
+              : resizeAnn(drag.orig, x - drag.sx, y - drag.sy),
+      });
       return;
     }
     if (!draft) return;
@@ -604,8 +690,33 @@ function PageViewImpl(p: Props) {
         onPointerUp={onPointerUp}
       >
         {all.map((a) => (
-          <AnnShape key={a.id} a={a} eraser={p.tool === 'eraser'} onDelete={p.onDelete} />
+          <AnnShape key={a.id} a={a} eraser={p.tool === 'eraser'} onDelete={p.onDelete} grab={grabbable && a.kind === 'image'} />
         ))}
+        {sel &&
+          (() => {
+            const a = all.find((x) => x.id === sel);
+            if (!a?.rect) return null;
+            const r = a.rect;
+            const hs = 6 / p.scale; // poignées de taille constante à l'écran
+            return (
+              <g className="grab-frame">
+                <rect x={r.x - 1 / p.scale} y={r.y - 1 / p.scale} width={r.w + 2 / p.scale} height={r.h + 2 / p.scale} strokeWidth={1.5 / p.scale} />
+                {(
+                  [
+                    ['tl', r.x, r.y],
+                    ['tr', r.x + r.w, r.y],
+                    ['bl', r.x, r.y + r.h],
+                    ['br', r.x + r.w, r.y + r.h],
+                  ] as [Corner, number, number][]
+                ).map(([c, cx, cy]) => (
+                  <g key={c} data-handle={c} className={`grab-handle h-${c}`}>
+                    <circle cx={cx} cy={cy} r={hs * 2.6} fill="transparent" />
+                    <circle cx={cx} cy={cy} r={hs} strokeWidth={1.5 / p.scale} />
+                  </g>
+                ))}
+              </g>
+            );
+          })()}
         {p.tool === 'move' &&
           all.map((a) => {
             const b = bboxOf(a);
@@ -618,6 +729,32 @@ function PageViewImpl(p: Props) {
             );
           })}
       </svg>
+      {sel &&
+        !drag &&
+        (() => {
+          const a = p.annotations.find((x) => x.id === sel);
+          if (!a?.rect) return null;
+          return (
+            <div className="grab-bar" style={{ left: (a.rect.x + a.rect.w / 2) * p.scale, top: a.rect.y * p.scale - 40 }}>
+              <button
+                onClick={(e) => window.dispatchEvent(new CustomEvent('nova:ann-select', { detail: { id: a.id, x: e.clientX, y: e.clientY } }))}
+                title="Taille exacte, couleur d’encre, opacité…"
+              >
+                Modifier…
+              </button>
+              <button
+                className="danger"
+                onClick={() => {
+                  p.onDelete(a.id);
+                  setSel(null);
+                }}
+                title="Supprimer (touche Suppr)"
+              >
+                Supprimer
+              </button>
+            </div>
+          );
+        })()}
       {p.tool === 'edittext' && hoverBlock && !textEdit && (
         <div
           className="edit-hover"
@@ -715,8 +852,9 @@ function PageViewImpl(p: Props) {
   );
 }
 
-function AnnShape({ a, eraser, onDelete }: { a: Annotation; eraser: boolean; onDelete: (id: string) => void }) {
+function AnnShape({ a, eraser, onDelete, grab }: { a: Annotation; eraser: boolean; onDelete: (id: string) => void; grab?: boolean }) {
   const common = {
+    ...(grab ? { 'data-grab': a.id, style: { pointerEvents: 'all' as const, cursor: 'move' } } : {}),
     onPointerDown: eraser
       ? (e: React.PointerEvent) => {
           e.stopPropagation();
@@ -940,6 +1078,26 @@ function moveAnn(a: Annotation, dx: number, dy: number): Annotation {
     rects: a.rects?.map((r) => ({ ...r, x: r.x + dx, y: r.y + dy })),
     points: a.points?.map((q) => [q[0] + dx, q[1] + dy] as [number, number]),
   };
+}
+
+type Corner = 'tl' | 'tr' | 'bl' | 'br';
+const GRAB_TOOLS: ToolId[] = ['select', 'hand', 'signature', 'stamp', 'image', 'move'];
+
+/** Redimensionne depuis un coin, le coin opposé reste fixe ; les proportions sont gardées pour les signatures et images. */
+function resizeCorner(a: Annotation, c: Corner, x: number, y: number): Annotation {
+  if (!a.rect) return a;
+  const r = a.rect;
+  const ax = c === 'tl' || c === 'bl' ? r.x + r.w : r.x;
+  const ay = c === 'tl' || c === 'tr' ? r.y + r.h : r.y;
+  const ratio = r.w / r.h;
+  let w = Math.max(12, Math.abs(x - ax));
+  let h = Math.max(12, Math.abs(y - ay));
+  if (a.kind === 'image') {
+    // la plus grande des deux directions décide, le reste suit les proportions
+    if (w / ratio >= h) h = w / ratio;
+    else w = h * ratio;
+  }
+  return { ...a, rect: { x: c === 'tl' || c === 'bl' ? ax - w : ax, y: c === 'tl' || c === 'tr' ? ay - h : ay, w, h } };
 }
 
 function resizeAnn(a: Annotation, dx: number, dy: number): Annotation {

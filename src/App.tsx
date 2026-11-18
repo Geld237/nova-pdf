@@ -792,6 +792,12 @@ export default function App() {
   }, [touchPrefs.keepAwake, doc?.id]);
 
   const [toolSheet, setToolSheet] = useState(false);
+  // après avoir posé une signature / un tampon / une image : retour à la lecture (pas de nouvelle pose par erreur)
+  useEffect(() => {
+    const on = () => setTool('select');
+    window.addEventListener('nova:tool-done', on);
+    return () => window.removeEventListener('nova:tool-done', on);
+  }, []);
 
   const ctx: DocCtx | null = doc
     ? {

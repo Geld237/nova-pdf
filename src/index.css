@@ -938,3 +938,14 @@ svg.sig-pad { width: 100%; height: auto; aspect-ratio: 640 / 220; background: #f
 .size-opt input { width: 90px; }
 .size-opt output { min-width: 42px; font-variant-numeric: tabular-nums; }
 .ai-vectorize { border: 1px dashed var(--accent); color: var(--accent); background: transparent; border-radius: 8px; padding: 6px; cursor: pointer; }
+
+/* ---- Signature / tampon / image sélectionné : cadre et poignées ---- */
+.grab-frame rect { fill: none; stroke: var(--accent); stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; pointer-events: none; }
+.grab-handle { pointer-events: all; }
+.grab-handle circle:last-child { fill: #fff; stroke: var(--accent); }
+.grab-handle.h-tl, .grab-handle.h-br { cursor: nwse-resize; }
+.grab-handle.h-tr, .grab-handle.h-bl { cursor: nesw-resize; }
+.grab-bar { position: absolute; transform: translateX(-50%); z-index: 6; display: flex; gap: 4px; padding: 3px; border-radius: 10px; background: var(--glass); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); box-shadow: var(--shadow); border: 1px solid var(--border); white-space: nowrap; }
+.grab-bar button { border: none; background: transparent; color: var(--text); padding: 4px 10px; border-radius: 7px; font-size: 12.5px; cursor: pointer; }
+.grab-bar button:hover { background: var(--accent-soft); }
+.grab-bar button.danger { color: #ff3b30; }
