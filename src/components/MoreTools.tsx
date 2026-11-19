@@ -10,6 +10,7 @@ import {
 import { protectPdf, unlockPdf, type Permissions } from '../pdf/security';
 import { writeFields } from '../pdf/forms';
 import { baseName, download, imagesToPdf, optimize } from '../pdf/tools';
+import { pdfToDocxRich, pdfToPptx, pdfToXlsx } from '../pdf/convertPlus';
 import type { OutlineItem } from '../types';
 import type { DocCtx } from './ToolsPanel';
 
@@ -39,6 +40,8 @@ export function MoreTools({ ctx, outline, run }: { ctx: DocCtx; outline: Outline
   // compression
   const [comp, setComp] = useState({ dpi: 110, quality: 0.6 });
   const [compProgress, setCompProgress] = useState('');
+  const [convProgress, setConvProgress] = useState('');
+  const prog = (i: number, n: number) => setConvProgress(`page ${i + 1}/${n}`);
   // mise en page
   const [crop, setCrop] = useState({ top: 10, right: 10, bottom: 10, left: 10, scope: 'all' as 'all' | 'current' });
   const [nup, setNup] = useState<{ n: 2 | 4 | 6 | 9; size: string }>({ n: 2, size: 'A4' });
@@ -79,10 +82,25 @@ export function MoreTools({ ctx, outline, run }: { ctx: DocCtx; outline: Outline
 
       <Section id="convert" title="Convertir le PDF en…">
         <div className="col">
+          <button className="primary" onClick={run('Export Word', async () => {
+            const b = await pdfToDocxRich(ctx.pdf, base, prog);
+            setConvProgress('');
+            download(b, `${base}.docx`, b.type);
+          })}>Word (.docx) — titres, gras, tableaux</button>
+          <button onClick={run('Export Excel', async () => {
+            const b = await pdfToXlsx(ctx.pdf, prog);
+            setConvProgress('');
+            download(new Blob([b as BlobPart], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `${base}.xlsx`, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+          })}>Excel (.xlsx) — tableaux détectés</button>
+          <button onClick={run('Export PowerPoint', async () => {
+            const b = await pdfToPptx(ctx.pdf, base, prog);
+            setConvProgress('');
+            download(b, `${base}.pptx`, 'application/vnd.openxmlformats-officedocument.presentationml.presentation');
+          })}>PowerPoint (.pptx) — une diapositive par page</button>
           <button onClick={run('Export Word', async () => {
             const t = ctx.texts ?? (await extractAllText(ctx.pdf));
-            download(await toDocx(t, base), `${base}.docx`);
-          })}>Word (.docx) — texte et paragraphes</button>
+            download(await toDocx(t, base), `${base}-texte.docx`);
+          })}>Word simple (texte seul)</button>
           <button onClick={run('Export HTML', async () => {
             const t = ctx.texts ?? (await extractAllText(ctx.pdf));
             download(toHtml(t, base), `${base}.html`, 'text/html;charset=utf-8');
@@ -93,7 +111,8 @@ export function MoreTools({ ctx, outline, run }: { ctx: DocCtx; outline: Outline
             ctx.notify(`${jpegs.length} image(s) JPEG extraite(s)${others ? `, ${others} autre(s) non prise(s) en charge` : ''}.`);
           })}>Extraire les images intégrées</button>
         </div>
-        <p className="muted">PNG, JPG, texte et Markdown : section « Exporter » ci-dessus.</p>
+        {convProgress && <small className="muted">{convProgress}</small>}
+        <p className="muted">Conversion locale : aucune donnée ne quitte l'appareil. PNG, JPG, texte et Markdown : outil « Exporter ».</p>
       </Section>
       <Section id="protect" title="Protéger par mot de passe (AES-256)">
         <label>Mot de passe d'ouverture <input type="password" value={pw.user} onChange={(e) => setPw({ ...pw, user: e.target.value })} /></label>

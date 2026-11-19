@@ -268,6 +268,23 @@ export async function applyAnnotations(
           const form = pdf.getForm();
           let name = a.fieldName || `Champ_${a.id}`;
           while (form.getFieldMaybe(name)) name += '_';
+          if (a.fieldType === 'radio') {
+            // groupe de boutons radio : un même nom regroupe tous les boutons
+            const g = a.fieldName || 'Choix';
+            let grp = form.getFieldMaybe(g) as ReturnType<typeof form.createRadioGroup> | undefined;
+            if (!grp || !('addOptionToPage' in grp)) grp = form.createRadioGroup(form.getFieldMaybe(g) ? `${g}_${a.id}` : g);
+            const opt = a.options?.[0] ?? a.text ?? 'Option';
+            grp.addOptionToPage(sanitize(font, opt) || 'Option', page, { x: b.x, y: b.y, width: b.w, height: b.h, borderColor: rgb(0.24, 0.32, 0.84), borderWidth: 1 });
+            if (a.text) page.drawText(sanitize(font, a.text), { x: b.x + b.w + 4, y: b.y + b.h * 0.2, size: Math.max(7, b.h * 0.75), font, color: rgb(0.1, 0.1, 0.12) });
+            break;
+          }
+          if (a.fieldType === 'dropdown') {
+            const dd = form.createDropdown(name);
+            const opts = (a.options ?? []).map((o) => sanitize(font, o)).filter(Boolean);
+            if (opts.length) dd.addOptions(opts);
+            dd.addToPage(page, { x: b.x, y: b.y, width: b.w, height: b.h, borderColor: rgb(0.24, 0.32, 0.84), borderWidth: 1 });
+            break;
+          }
           if (a.fieldType === 'checkbox') form.createCheckBox(name).addToPage(page, { x: b.x, y: b.y, width: b.w, height: b.h });
           else if (a.fieldType === 'signature') {
             form.createTextField(name).addToPage(page, {
@@ -276,7 +293,12 @@ export async function applyAnnotations(
             });
             page.drawText(sanitize(font, `Signature : ${name.split(':')[1] ?? ''}`), { x: b.x, y: b.y + b.h + 2, size: 7, font, color: rgb(0.24, 0.32, 0.84) });
           }
-          else form.createTextField(name).addToPage(page, { x: b.x, y: b.y, width: b.w, height: b.h });
+          else {
+            const tf = form.createTextField(name);
+            if (a.fieldType === 'multiline' || b.h > 40) tf.enableMultiline();
+            tf.addToPage(page, { x: b.x, y: b.y, width: b.w, height: b.h });
+            if (a.text) tf.setText(sanitize(font, a.text));
+          }
           break;
         }
         case 'redact':

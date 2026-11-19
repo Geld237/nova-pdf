@@ -63,7 +63,9 @@ export interface Annotation {
   text?: string; // texte saisi ou texte surligné
   fontSize?: number;
   dataUrl?: string; // image (signature, tampon)
-  fieldType?: 'text' | 'checkbox' | 'signature'; // champ de formulaire à créer
+  fieldType?: 'text' | 'checkbox' | 'signature' | 'dropdown' | 'radio' | 'date' | 'multiline'; // champ de formulaire à créer
+  options?: string[]; // liste déroulante / boutons radio : choix possibles
+  group?: string; // boutons radio : nom du groupe
   fieldName?: string;
   bg?: string; // couleur de fond (texte modifié)
   fontFamily?: string; // 'sans' | 'serif' | 'mono' | 'custom:…'

@@ -20,11 +20,18 @@ Bouton « Arrêter » fiable pour toutes les tâches d'IA (résumé, QCM, fiches
 ## v0.9 — disponible ✅
 Thèmes sépia et contraste élevé, couleur d'accent ; inspecteur pour modifier une annotation après coup (couleur, épaisseur, opacité, dupliquer) ; styles de texte enregistrés et polices personnelles (.ttf/.otf) intégrées au PDF ; tâches d'IA en arrière-plan avec file d'attente et notification de fin ; résumé progressif chapitre par chapitre ; comparaison visuelle de deux versions (mots ajoutés/supprimés, différences d'image) ; vue présentateur sur deux écrans (diapo suivante, notes, minuteur) ; recherche par le sens dans la bibliothèque ; tampons et signatures datés à la minute ; export en images (PNG/JPG/WebP, résolution, ZIP) et capture de zone.
 
+## v1.0 — disponible ✅
+Traitement par lots (plusieurs PDF × OCR, en-tête/pied, Bates, filigrane, recadrage, compression, aplatissement, métadonnées, PDF/A, protection, signature, conversion ; résultat en ZIP) ; reconnaissance automatique des champs d'un formulaire « papier » (lignes, cadres, cases à cocher), listes déroulantes et boutons radio, export/import des réponses en Excel/CSV, extraction des réponses de nombreux formulaires ; en-têtes et pieds de page à variables et numérotation Bates ; conversion PDF → Excel (tableaux détectés), PowerPoint et Word structuré (titres, gras, tableaux) ; IA : carte mentale exportable, corriger / reformuler une sélection, revue de contrat selon le point de vue, pages web et textes collés comme sources ; signature numérique par certificat (PAdES, .p12/.pfx, ou certificat personnel) ; export PDF/A-2b ; coller une image ou un texte (Ctrl+V) sur la page ou comme nouvelle page.
+
 ## Prochaines idées 💡
+- [ ] Signatures multiples par enregistrement incrémental (aujourd'hui, une nouvelle signature invalide les précédentes)
+- [ ] Validation PDF/A intégrée (veraPDF) et intégration des polices standard manquantes
+- [ ] Word / Excel / PowerPoint → PDF hors ligne
+- [ ] Modification du texte avec ré-agencement automatique des paragraphes
 - [ ] **Widgets natifs** d'écran d'accueil (Android AppWidget, iOS WidgetKit) : derniers documents, fiches du jour
 - [ ] **Reconnaissance vocale 100 % locale** (Whisper en WebGPU)
 - [ ] Relecture à plus de deux appareils, curseurs des autres relecteurs
-- [ ] **Détection des champs** d'un formulaire scanné, et des signatures manquantes
+- [ ] Détection des signatures manquantes
 - [ ] Surlignage synchronisé avec la lecture à voix haute
 - [ ] **Extensions** : API de plugins pour ajouter des outils
 

@@ -44,6 +44,7 @@ import { ContextMenu, type MenuItem, type MenuState } from './components/Context
 import { Workspace, type WorkspaceKind } from './components/Workspace';
 import { DialogHost, ui } from './dialogs';
 import { download, extractPages, baseName, assemblePages, imagesToPdf } from './pdf/tools';
+import { textToPdf } from './pdf/advanced';
 import { identity, movePages, remapAnnotations, type LayoutItem } from './pageLayout';
 import { renderPageToCanvas, canvasToBlob, openPdf } from './pdf/engine';
 import { loadDeck, newCard, saveDeck } from './study';
@@ -793,6 +794,21 @@ export default function App() {
   }, [touchPrefs.keepAwake, doc?.id]);
 
   const [toolSheet, setToolSheet] = useState(false);
+  // boutons de l'outil Champ : reconnaissance automatique / export des réponses → panneau Formulaire
+  useEffect(() => {
+    const go = (act: string) => () => {
+      setPanel('form');
+      setTimeout(() => window.dispatchEvent(new CustomEvent('nova:form-action', { detail: act })), 400);
+    };
+    const d = go('recognize');
+    const x = go('export');
+    window.addEventListener('nova:detect-fields', d);
+    window.addEventListener('nova:export-form', x);
+    return () => {
+      window.removeEventListener('nova:detect-fields', d);
+      window.removeEventListener('nova:export-form', x);
+    };
+  }, []);
   // après avoir posé une signature / un tampon / une image : retour à la lecture (pas de nouvelle pose par erreur)
   useEffect(() => {
     const on = () => setTool('select');
@@ -992,9 +1008,107 @@ export default function App() {
     u.lang = 'fr-FR';
     speechSynthesis.speak(u);
   };
-  const askAi = (action: 'explain' | 'translate', text: string) => {
+  const askAi = (action: 'explain' | 'translate' | 'proofread' | 'rephrase', text: string) => {
     setPanel('ai');
     setTimeout(() => window.dispatchEvent(new CustomEvent('nova:ai', { detail: { action, text } })), 120);
+  };
+
+  /** Coller depuis le presse-papiers : une image devient une image sur la page (avec poignées), un texte une zone de texte. */
+  const pasteOnPage = useCallback(
+    async (data: { image?: Blob; text?: string }) => {
+      const d = docRef.current;
+      if (!d) {
+        if (data.image) await loadInto(await imagesToPdf([new File([data.image], 'presse-papiers.png', { type: data.image.type || 'image/png' })]), 'presse-papiers.pdf');
+        return;
+      }
+      const pi = Math.min(page, d.sizes.length - 1);
+      const { w: W, h: H } = d.sizes[pi];
+      const id = Math.random().toString(36).slice(2, 10);
+      if (data.image) {
+        const url = await new Promise<string>((r) => {
+          const fr = new FileReader();
+          fr.onload = () => r(fr.result as string);
+          fr.readAsDataURL(data.image!);
+        });
+        const img = new Image();
+        img.src = url;
+        await img.decode();
+        const w = Math.min(img.width * 0.75, W * 0.6);
+        const h = (img.height / img.width) * w;
+        onAdd({ id, page: pi, kind: 'image', color: '#000000', opacity: 1, strokeWidth: 1, rect: { x: (W - w) / 2, y: Math.max(10, (H - h) / 2), w, h }, dataUrl: url, createdAt: Date.now() });
+        setTool('select');
+        setTimeout(() => window.dispatchEvent(new CustomEvent('nova:grab-select', { detail: { id, page: pi } })), 60);
+        notify('Image collée : déplacez-la ou redimensionnez-la avec les poignées.');
+      } else if (data.text?.trim()) {
+        const size = 12;
+        const maxChars = Math.max(20, Math.floor((W * 0.8) / (size * 0.5)));
+        const lines = data.text.replace(/\r/g, '').split('\n').flatMap((l) => {
+          const out: string[] = [];
+          let cur = '';
+          for (const word of l.split(' ')) {
+            if ((cur + ' ' + word).trim().length > maxChars && cur) {
+              out.push(cur);
+              cur = word;
+            } else cur = (cur + ' ' + word).trim();
+          }
+          out.push(cur);
+          return out;
+        }).slice(0, 60);
+        const text = lines.join('\n');
+        const w = Math.min(W * 0.8, Math.max(...lines.map((l) => l.length)) * size * 0.5 + 4);
+        const h = size * 1.2 * lines.length;
+        onAdd({ id, page: pi, kind: 'text', color: '#1c1e26', opacity: 1, strokeWidth: 1, rect: { x: (W - w) / 2, y: Math.max(10, (H - h) / 2), w, h }, text, fontSize: size, fontFamily: 'sans', createdAt: Date.now() });
+        setTool('select');
+        setTimeout(() => window.dispatchEvent(new CustomEvent('nova:grab-select', { detail: { id, page: pi } })), 60);
+        notify('Texte collé sur la page (double-cliquez pour le modifier).');
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [page, onAdd],
+  );
+  const readClipboard = async (): Promise<{ image?: Blob; text?: string }> => {
+    try {
+      const items = await navigator.clipboard.read();
+      for (const it of items) {
+        const t = it.types.find((x) => x.startsWith('image/'));
+        if (t) return { image: await it.getType(t) };
+      }
+      for (const it of items) if (it.types.includes('text/plain')) return { text: await (await it.getType('text/plain')).text() };
+    } catch {
+      try {
+        return { text: await navigator.clipboard.readText() };
+      } catch {
+        /* accès refusé */
+      }
+    }
+    return {};
+  };
+  useEffect(() => {
+    const on = (e: ClipboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t?.closest?.('input, textarea, select, [contenteditable="true"], .dialog')) return;
+      const cd = e.clipboardData;
+      if (!cd) return;
+      const file = Array.from(cd.items).find((i) => i.kind === 'file' && i.type.startsWith('image/'))?.getAsFile();
+      const text = cd.getData('text/plain');
+      if (!file && !text) return;
+      e.preventDefault();
+      pasteOnPage(file ? { image: file } : { text }).catch((err) => notify(`Collage impossible : ${(err as Error).message}`));
+    };
+    window.addEventListener('paste', on);
+    return () => window.removeEventListener('paste', on);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pasteOnPage]);
+  const pasteAsPage = async (at: number) => {
+    const c = await readClipboard();
+    if (!c.image && !c.text) return notify('Le presse-papiers est vide ou inaccessible (autorisez l’accès, ou utilisez Ctrl+V sur la page).');
+    const bytes = c.image
+      ? await imagesToPdf([new File([c.image], 'presse-papiers.png', { type: c.image.type || 'image/png' })])
+      : await textToPdf(c.text!, 'Texte collé');
+    const src = await openPdf(bytes, () => null);
+    const o = identity(nPages());
+    o.splice(at, 0, ...Array.from({ length: src.numPages }, (_, i) => ({ doc: 1, src: i, rotate: 0 })));
+    await applyLayout(o, 'Presse-papiers inséré comme page', [bytes]);
   };
 
   /** Menu d'une page (ou de plusieurs pages sélectionnées dans la colonne Pages). */
@@ -1010,6 +1124,7 @@ export default function App() {
       { label: 'Insérer après : image(s)…', icon: 'image', action: () => insertFrom(last + 1, 'images') },
       { label: 'Insérer après : scanner…', icon: 'scan', action: () => insertFrom(last + 1, 'scan') },
       { label: 'Insérer une page blanche après', icon: 'create', action: () => insertBlank(last) },
+      { label: 'Coller le presse-papiers comme page après', icon: 'copy', action: () => pasteAsPage(last + 1) },
       { label: 'Insérer avant : pages d’un autre PDF…', icon: 'merge', action: () => insertFrom(first, 'pdf') },
       'sep',
       { label: 'Pivoter à droite', icon: 'rotateCw', action: () => rotatePages(l, 90) },
@@ -1057,6 +1172,8 @@ export default function App() {
         'sep',
         { label: "Expliquer avec l'IA", icon: 'ai', action: () => askAi('explain', sel) },
         { label: 'Traduire', icon: 'translate', action: () => askAi('translate', sel) },
+        { label: 'Corriger (orthographe, grammaire)', icon: 'edit', action: () => askAi('proofread', sel) },
+        { label: 'Reformuler', icon: 'swap', action: () => askAi('rephrase', sel) },
         { label: 'Citer dans mes notes', icon: 'cite', action: () => appendNote(doc.fingerprint, doc.name, `> « ${sel} » [p. ${pi + 1}]`).then(() => notify('Citation ajoutée à vos notes.')) },
         {
           label: 'Créer une fiche de révision',
@@ -1097,6 +1214,7 @@ export default function App() {
         { header: 'Ajouter ici' },
         { label: 'Note', icon: 'note', action: () => window.dispatchEvent(new CustomEvent('nova:edit-at', { detail: { page: pi, x, y, kind: 'note' } })) },
         { label: 'Texte', icon: 'text', action: () => window.dispatchEvent(new CustomEvent('nova:edit-at', { detail: { page: pi, x, y, kind: 'text' } })) },
+        { label: 'Coller (image ou texte)', icon: 'copy', shortcut: 'Ctrl+V', action: async () => pasteOnPage(await readClipboard()) },
         {
           label: 'Ma signature',
           icon: 'signature',
@@ -1525,10 +1643,32 @@ export default function App() {
             )}
             {tool === 'field' && (
               <div className="tool-opts">
-                <select value={opts.fieldType} onChange={(e) => setOpts({ ...opts, fieldType: e.target.value as 'text' | 'checkbox' })}>
+                <select value={opts.fieldType} onChange={(e) => setOpts({ ...opts, fieldType: e.target.value as typeof opts.fieldType })}>
                   <option value="text">Champ texte</option>
+                  <option value="multiline">Zone de texte (plusieurs lignes)</option>
+                  <option value="date">Date</option>
                   <option value="checkbox">Case à cocher</option>
+                  <option value="radio">Boutons radio (un seul choix)</option>
+                  <option value="dropdown">Liste déroulante</option>
                 </select>
+                {(opts.fieldType === 'dropdown' || opts.fieldType === 'radio') && (
+                  <input
+                    className="field-options"
+                    placeholder="Choix séparés par des virgules"
+                    value={opts.fieldOptions ?? 'Oui, Non'}
+                    onChange={(e) => setOpts({ ...opts, fieldOptions: e.target.value })}
+                    title="Choix possibles, séparés par des virgules"
+                  />
+                )}
+                {opts.fieldType === 'radio' && (
+                  <input className="field-options short" placeholder="Nom du groupe" value={opts.radioGroup ?? ''} onChange={(e) => setOpts({ ...opts, radioGroup: e.target.value })} title="Les boutons d'un même groupe s'excluent" />
+                )}
+                <button onClick={() => window.dispatchEvent(new Event('nova:detect-fields'))} title="Repère les zones à remplir (lignes pointillées, cases, « Nom : ____ ») et crée les champs">
+                  ✦ Détecter les champs
+                </button>
+                <button onClick={() => window.dispatchEvent(new Event('nova:export-form'))} title="Exporter les réponses du formulaire (Excel / CSV)">
+                  Exporter les réponses
+                </button>
               </div>
             )}
           </>

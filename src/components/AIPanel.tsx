@@ -3,11 +3,55 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { AbortedError, aiDiagnostics, chat, lastEngine, customCpuModelName, gpuMarkedBroken, listOllamaModels, resetGpuFlag, setCustomCpuModel, CPU_MODELS, WEBLLM_MODELS, webGpuAvailable, type AiSettings, type ChatMessage } from '../ai/llm';
 import { Bm25Index, chunkPages, type Chunk } from '../ai/retrieval';
 import { saveSetting } from '../memory';
+import { isTauri } from '../platform';
+import { MindMap, parseOutline, type MapNode } from './MindMap';
 import type { Annotation, PageText } from '../types';
 
 interface Msg {
   role: 'user' | 'assistant';
   content: string;
+  map?: MapNode;
+}
+
+/** Récupère une page web et en extrait le texte lisible (source pour l'analyse multi-documents). */
+async function fetchWebPage(url: string): Promise<CorpusDoc> {
+  let html: string;
+  try {
+    if (isTauri) {
+      const { fetch: tf } = await import('@tauri-apps/plugin-http');
+      html = await (await tf(url, { method: 'GET' })).text();
+    } else {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      html = await r.text();
+    }
+  } catch {
+    throw new Error(
+      isTauri
+        ? `Impossible de lire ${url} (hors ligne ou adresse invalide).`
+        : `Le site refuse d'être lu depuis le navigateur (protection CORS). Utilisez l'application de bureau, ou copiez le texte de la page et collez-le dans ce champ.`,
+    );
+  }
+  const d = new DOMParser().parseFromString(html, 'text/html');
+  d.querySelectorAll('script,style,noscript,nav,footer,header,aside,form,svg,iframe').forEach((e) => e.remove());
+  const main = d.querySelector('article') ?? d.querySelector('main') ?? d.body;
+  const blocks = Array.from(main?.querySelectorAll('h1,h2,h3,h4,p,li,td,blockquote,pre') ?? []).map((e) => e.textContent?.replace(/\s+/g, ' ').trim() ?? '').filter((t) => t.length > 1);
+  const text = (blocks.length > 3 ? blocks.join('\n') : main?.textContent?.replace(/\s+/g, ' ') ?? '').trim();
+  if (text.length < 40) throw new Error('Aucun texte lisible sur cette page.');
+  return textDoc(`web:${url}`, `🌐 ${d.title?.trim() || new URL(url).hostname}`, text);
+}
+
+/** Découpe un long texte en « pages » de ~2500 caractères pour l'indexation. */
+function textDoc(id: string, name: string, text: string): CorpusDoc {
+  const texts: PageText[] = [];
+  for (let i = 0, k = 0; i < text.length; k++) {
+    let end = Math.min(text.length, i + 2500);
+    const nl = text.lastIndexOf('\n', end);
+    if (end < text.length && nl > i + 1200) end = nl;
+    texts.push({ page: k, text: text.slice(i, end) });
+    i = end;
+  }
+  return { id, name, texts };
 }
 
 interface Props {
@@ -66,7 +110,28 @@ export function AIPanel(p: Props) {
     if (el) el.scrollTop = el.scrollHeight;
   }, [msgs]);
   const [scope, setScope] = useState<Scope>('doc');
-  const [docs, setDocs] = useState<CorpusDoc[]>([]);
+  const [corpusDocs, setDocs] = useState<CorpusDoc[]>([]);
+  const [webDocs, setWebDocs] = useState<CorpusDoc[]>([]);
+  const docs = useMemo(() => [...corpusDocs, ...webDocs], [corpusDocs, webDocs]);
+  const [webUrl, setWebUrl] = useState('');
+  const [webBusy, setWebBusy] = useState(false);
+  const [role, setRole] = useState('client / acheteur');
+  const addWeb = async () => {
+    const v = webUrl.trim();
+    if (!v) return;
+    setError(null);
+    setWebBusy(true);
+    try {
+      const d = /^https?:\/\//i.test(v) ? await fetchWebPage(v) : /^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(v) ? await fetchWebPage(`https://${v}`) : textDoc(`txt:${Date.now()}`, `📝 Texte collé (${v.slice(0, 24)}…)`, v);
+      setWebDocs((w) => [...w.filter((x) => x.id !== d.id), d]);
+      setSelected((s) => new Set([...s, d.id]));
+      setWebUrl('');
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setWebBusy(false);
+    }
+  };
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -247,7 +312,7 @@ export function AIPanel(p: Props) {
   // Commandes reçues du menu contextuel (« Expliquer », « Traduire », « Résumer »)
   useEffect(() => {
     const h = (e: Event) => {
-      const d = (e as CustomEvent).detail as { action: 'explain' | 'translate' | 'ask'; text: string };
+      const d = (e as CustomEvent).detail as { action: 'explain' | 'translate' | 'ask' | 'proofread' | 'rephrase'; text: string };
       stopped.current = false;
       setScope('doc');
       if (d.action === 'explain') {
@@ -255,6 +320,16 @@ export function AIPanel(p: Props) {
         run(`Explique : « ${d.text.slice(0, 120)}${d.text.length > 120 ? '…' : ''} »`, [
           { role: 'system', content: SYSTEM },
           { role: 'user', content: `Contexte (page ${p.currentPage + 1}) :\n${ctx}\n\nExplique simplement ce passage, définis les termes techniques et donne un exemple :\n« ${d.text} »` },
+        ]);
+      } else if (d.action === 'proofread') {
+        run(`Corriger : « ${d.text.slice(0, 80)}${d.text.length > 80 ? '…' : ''} »`, [
+          { role: 'system', content: "Tu es correcteur professionnel. Corrige l'orthographe, la grammaire, la ponctuation et la typographie du texte, dans sa langue, sans changer le sens ni le style. Réponds d'abord par le texte corrigé, puis une ligne vide, puis « Corrections : » et la liste courte des changements." },
+          { role: 'user', content: d.text },
+        ]);
+      } else if (d.action === 'rephrase') {
+        run(`Reformuler : « ${d.text.slice(0, 80)}${d.text.length > 80 ? '…' : ''} »`, [
+          { role: 'system', content: "Tu reformules des textes dans leur langue d'origine. Propose trois versions numérotées : 1. plus claire et simple, 2. plus formelle, 3. plus concise. Garde le sens exact. Réponds uniquement par les trois versions." },
+          { role: 'user', content: d.text },
         ]);
       } else if (d.action === 'translate') {
         run(`Traduire : « ${d.text.slice(0, 80)}… »`, [
@@ -278,6 +353,75 @@ export function AIPanel(p: Props) {
       { role: 'system', content: SYSTEM },
       { role: 'user', content: `${source.slice(0, BUDGET)}\n\nCrée 6 à 10 fiches de révision au format :\nQ : question\nR : réponse courte [p. N]` },
     ]);
+  };
+
+  /** Extrait représentatif du document qui tient dans le budget (début de chaque page). */
+  const sampleDoc = () => {
+    if (!p.texts) return '';
+    const per = Math.max(200, Math.floor(BUDGET / Math.max(1, p.texts.length)));
+    return p.texts.map((t) => `[p. ${t.page + 1}] ${t.text.slice(0, per)}`).join('\n').slice(0, BUDGET);
+  };
+
+  const mindMap = async () => {
+    stopped.current = false;
+    if (!p.texts) return;
+    const ch = (p.chapters ?? []).filter((c) => c.page >= 0).slice(0, 30);
+    const out = await run('Carte mentale du document', [
+      { role: 'system', content: SYSTEM },
+      {
+        role: 'user',
+        content: `${ch.length ? `Sommaire :\n${ch.map((c) => `- ${c.title} [p. ${c.page + 1}]`).join('\n')}\n\n` : ''}Document :\n${sampleDoc()}\n\n` +
+          'Construis la carte mentale de ce document. Réponds UNIQUEMENT par un plan Markdown :\n# Sujet central (quelques mots)\n## Branche principale (4 à 7 branches)\n- idée (2 à 4 par branche, 8 mots maximum) [p. N]\n  - détail éventuel [p. N]',
+      },
+    ]);
+    if (!out) return;
+    const tree = parseOutline(out, p.chapters?.[0]?.title ?? 'Document');
+    if (!tree.children.length) return;
+    setMsgs((m) => {
+      const c = [...m];
+      c[c.length - 1] = { ...c[c.length - 1], map: tree };
+      return c;
+    });
+  };
+
+  const contractReview = async () => {
+    stopped.current = false;
+    if (!p.texts) return;
+    const groups: PageText[][] = [];
+    let cur: PageText[] = [];
+    let n = 0;
+    for (const t of p.texts) {
+      if (n + t.text.length > BUDGET && cur.length) {
+        groups.push(cur);
+        cur = [];
+        n = 0;
+      }
+      cur.push({ ...t, text: t.text.slice(0, BUDGET) });
+      n += Math.min(t.text.length, BUDGET);
+    }
+    if (cur.length) groups.push(cur);
+    const sys = `${SYSTEM} Tu es juriste et tu relis un contrat en défendant les intérêts de la partie suivante : ${role}. Tu n'es pas un avocat : signale ce qui mérite une vérification professionnelle.`;
+    const ask = 'Tableau Markdown des clauses à risque ou défavorables : | Clause | Page | Risque (élevé / moyen / faible) | Pourquoi | Suggestion de modification |. Puis signale les clauses habituelles absentes.';
+    if (groups.length === 1) {
+      await run(`Revue de contrat (point de vue : ${role})`, [{ role: 'system', content: sys }, { role: 'user', content: `Contrat :\n${pagesText(groups[0])}\n\n${ask}` }]);
+      return;
+    }
+    const picked = groups.slice(0, 10);
+    setMsgs((m) => [...m, { role: 'user', content: `Revue de contrat (point de vue : ${role}, ${picked.length} parties)` }]);
+    const partial: string[] = [];
+    for (let i = 0; i < picked.length; i++) {
+      const g = picked[i];
+      const out = await run(`Partie ${i + 1}/${picked.length} (p. ${g[0].page + 1}–${g[g.length - 1].page + 1})`, [
+        { role: 'system', content: sys },
+        { role: 'user', content: `Extrait du contrat :\n${pagesText(g)}\n\nListe en puces les clauses à risque pour ${role} : clause, page, niveau de risque, raison.` },
+      ], true);
+      if (!out) return;
+      partial.push(out);
+    }
+    await run('✦ Tableau des risques', [
+      { role: 'system', content: sys },
+      { role: 'user', content: `Analyses partielles :\n${partial.join('\n\n').slice(0, BUDGET * 1.3)}\n\n${ask}` },
+    ], true);
   };
 
   const MULTI_SYSTEM =
@@ -389,7 +533,7 @@ export function AIPanel(p: Props) {
       </div>
       {scope !== 'doc' && (
         <div className="corpus">
-          {docs.length === 0 && <p className="muted">Aucun document {scope === 'tabs' ? 'ouvert' : 'dans la bibliothèque'}.</p>}
+          {docs.length === 0 && <p className="muted">Aucun document {scope === 'tabs' ? 'ouvert' : 'dans la bibliothèque'}. Vous pouvez ajouter des pages web ci-dessous.</p>}
           {docs.map((d) => (
             <label key={d.id} className="check">
               <input
@@ -405,6 +549,16 @@ export function AIPanel(p: Props) {
               <b>D{active.findIndex((a) => a.id === d.id) + 1 || '–'}</b> {d.name} <small className="muted">({d.texts.length} p.)</small>
             </label>
           ))}
+          <div className="row web-src">
+            <input
+              aria-label="Adresse d'une page web ou texte à ajouter"
+              placeholder="＋ Page web (https://…) ou texte collé"
+              value={webUrl}
+              onChange={(e) => setWebUrl(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && addWeb()}
+            />
+            <button disabled={webBusy || !webUrl.trim()} onClick={addWeb}>{webBusy ? '…' : 'Ajouter'}</button>
+          </div>
           <div className="row">
             <button disabled={busy || active.length < 2} onClick={() => crossAnalysis('contracts')}>Comparer (contrats)</button>
             <button disabled={busy || active.length < 2} onClick={() => crossAnalysis('review')}>Revue de littérature</button>
@@ -537,6 +691,13 @@ export function AIPanel(p: Props) {
         </button>
         <button disabled={busy} onClick={explainSelection}>Expliquer la sélection</button>
         <button disabled={busy || !p.texts} onClick={flashcards}>Fiches de révision</button>
+        <button disabled={busy || !p.texts} onClick={mindMap}>Carte mentale</button>
+        <span className="translate">
+          <button disabled={busy || !p.texts} onClick={contractReview}>Revue de contrat pour</button>
+          <select aria-label="Point de vue de la revue" value={role} onChange={(e) => setRole(e.target.value)}>
+            {['client / acheteur', 'prestataire / vendeur', 'salarié', 'employeur', 'locataire', 'bailleur', 'partie neutre'].map((r) => <option key={r}>{r}</option>)}
+          </select>
+        </span>
         <button
           disabled={busy || !p.texts}
           onClick={() => pageAction('Liste les chiffres, dates, noms et définitions importants de cette page, sous forme de tableau Markdown.', `Données clés de la page ${p.currentPage + 1}`)}
@@ -574,7 +735,7 @@ export function AIPanel(p: Props) {
         )}
         {msgs.map((m, i) => (
           <div key={i} className={`msg ${m.role}`}>
-            <Cited text={m.content || '…'} goTo={p.goTo} openDoc={(k, page) => active[k] && p.openAt(active[k].id, page)} />
+            {m.map ? <MindMap tree={m.map} goTo={p.goTo} /> : <Cited text={m.content || '…'} goTo={p.goTo} openDoc={(k, page) => active[k] && !active[k].id.includes(':') ? p.openAt(active[k].id, page) : undefined} />}
             {m.role === 'assistant' && m.content && !(busy && i === msgs.length - 1) && (
               <div className="msg-actions">
                 <button className="link" onClick={() => p.onToNotes(m.content)}>→ Ajouter aux notes</button>

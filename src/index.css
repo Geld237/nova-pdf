@@ -1039,3 +1039,51 @@ svg.sig-pad { width: 100%; height: auto; aspect-ratio: 640 / 220; background: #f
 .pres-timer-pop { position: fixed; bottom: 70px; left: 50%; transform: translateX(-50%); z-index: 70; background: rgb(28 28 30 / 0.96); color: #eee; border-radius: 14px; padding: 12px 14px; width: min(460px, 94vw); box-shadow: 0 10px 40px rgb(0 0 0 / 0.5); }
 .pres-timer-pop button, .pres-timer-pop input, .pres-timer-pop select { background: #2a2a30; color: #fff; border: 1px solid #3a3a42; border-radius: 7px; padding: 3px 8px; }
 .pres-timer-pop .tp-close { margin-top: 8px; width: 100%; }
+.form-tools { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.form-tools .row { display: flex; gap: 6px; flex-wrap: wrap; }
+.field-options { width: 190px; height: 28px; border-radius: 7px; }
+.field-options.short { width: 110px; }
+
+/* ---- En-tête / pied de page ---- */
+.hf-row { display: flex; flex-direction: column; gap: 3px; }
+.hf-cells { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; }
+.hf-cells input { min-width: 0; }
+.hf-prev { position: absolute; left: 6px; right: 6px; display: flex; justify-content: space-between; font-family: Helvetica, Arial, sans-serif; pointer-events: none; }
+.hf-prev span { flex: 1; white-space: nowrap; overflow: hidden; }
+.hf-prev span:nth-child(2) { text-align: center; }
+.hf-prev span:nth-child(3) { text-align: right; }
+.hf-prev.header { top: 5px; }
+.hf-prev.footer { bottom: 5px; }
+details.bates { border: 1px solid var(--border); border-radius: var(--radius); padding: 6px 8px; }
+details.bates summary { cursor: pointer; font-size: 13px; }
+details.bates[open] { display: flex; flex-direction: column; gap: 6px; }
+
+/* ---- Certificat ---- */
+.cert-card, .cert-create { display: flex; flex-direction: column; gap: 6px; padding: 10px; border-radius: 12px; background: var(--panel-2); }
+.cert-card .row { justify-content: space-between; }
+.cert-info { display: flex; flex-direction: column; gap: 2px; }
+button.link { background: none; border: none; color: var(--accent); padding: 0; }
+
+/* ---- Traitement par lots ---- */
+.ws-body.batch { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(300px, 420px); gap: 20px; align-items: start; }
+.batch-files, .batch-steps { display: flex; flex-direction: column; gap: 8px; }
+.batch-files { position: sticky; top: 0; }
+.batch-steps { background: var(--panel); border-radius: 14px; padding: 14px; box-shadow: var(--shadow); }
+.batch-steps h3 { margin: 6px 0 2px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.batch-drop { border: 2px dashed var(--border); border-radius: 14px; padding: 18px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.batch-drop.over { border-color: var(--accent); background: var(--accent-soft); }
+.batch-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.batch-list li { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--panel); border-radius: 10px; box-shadow: var(--shadow); }
+.batch-list .b-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.batch-list .b-status { font-size: 12px; color: var(--muted); max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.batch-list li.st-terminé .b-status { color: var(--ok); }
+.batch-list li.st-erreur .b-status { color: var(--danger); }
+.b-step { display: flex; flex-direction: column; gap: 4px; }
+.b-sub { margin-left: 24px; }
+@media (max-width: 760px) { .ws-body.batch { grid-template-columns: 1fr; } }
+
+/* ---- Carte mentale / sources web ---- */
+.mindmap { display: flex; flex-direction: column; gap: 4px; }
+.mindmap-scroll { overflow: auto; max-height: 460px; border-radius: 10px; border: 1px solid var(--border); background: #fff; }
+.mindmap-scroll svg { display: block; }
+.web-src input { flex: 1; min-width: 0; }

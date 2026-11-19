@@ -9,8 +9,9 @@ import { PAGE_SIZES, cropPages, nUp } from '../pdf/advanced';
 import { Thumb } from './Thumb';
 import { OrganizePanel } from './OrganizePanel';
 import type { DocCtx } from './ToolsPanel';
+import { BatchWS } from './BatchWS';
 
-export type WorkspaceKind = 'organize' | 'split' | 'extract' | 'crop' | 'merge' | 'nup';
+export type WorkspaceKind = 'organize' | 'split' | 'extract' | 'crop' | 'merge' | 'nup' | 'batch';
 
 const TITLES: Record<WorkspaceKind, [string, IconName]> = {
   organize: ['Organiser les pages', 'organize'],
@@ -19,6 +20,7 @@ const TITLES: Record<WorkspaceKind, [string, IconName]> = {
   crop: ['Recadrer les pages', 'crop'],
   merge: ['Fusionner des PDF', 'merge'],
   nup: ['Plusieurs pages par feuille', 'grid'],
+  batch: ['Traitement par lots', 'tools'],
 };
 
 const GROUP_COLORS = ['#007aff', '#ff9500', '#34c759', '#af52de', '#ff2d55', '#5ac8fa', '#ffcc00', '#5856d6'];
@@ -42,6 +44,7 @@ export function Workspace({ kind, ctx, onClose }: { kind: WorkspaceKind; ctx: Do
       {kind === 'crop' && <CropWS ctx={ctx} onDone={onClose} />}
       {kind === 'merge' && <MergeWS ctx={ctx} onDone={onClose} />}
       {kind === 'nup' && <NupWS ctx={ctx} />}
+      {kind === 'batch' && <BatchWS ctx={ctx} />}
     </div>
   );
 }

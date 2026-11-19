@@ -151,23 +151,23 @@ Comparaison avec les outils d'Adobe Acrobat et de PDF24. ✅ disponible · 🟡 
 
 | Outil | Nova PDF | Outil | Nova PDF |
 |---|---|---|---|
-| Exporter / convertir le PDF | ✅ Word, HTML, PNG, JPG, TXT, MD | Fusionner | ✅ |
+| Exporter / convertir le PDF | ✅ Word (titres, tableaux), Excel (tableaux), PowerPoint, HTML, PNG, JPG, TXT, MD | Fusionner | ✅ |
 | Modifier un PDF | ✅ texte existant, images, déplacement, filigrane, numéros | Compresser / optimiser web | ✅ / 🟡 (linéarisation 🔜) |
 | Créer un PDF | ✅ images, caméra, vierge, texte · 🔜 Office | Protéger / déverrouiller | ✅ AES-256 |
 | Combiner, organiser, trier, pivoter, supprimer, extraire | ✅ | Découper | ✅ |
 | Assistant IA, résumé génératif | ✅ 100 % local | PDF en images | ✅ |
 | Demander des signatures électroniques | 🔜 (sans serveur, P2P) | Extraire les images | 🟡 JPEG |
-| Scan et OCR | ✅ | Filigrane, numéros de page | ✅ |
+| Scan et OCR | ✅ | Filigrane, numéros, en-tête / pied, Bates | ✅ |
 | Biffer (caviarder) | ✅ suppression réelle | Signer, annoter | ✅ |
 | Ajouter un tampon | ✅ | Recadrer | ✅ |
-| Utiliser un certificat | 🔜 PAdES | Aplatir | ✅ |
+| Utiliser un certificat | ✅ PAdES (.p12/.pfx ou certificat personnel) | Aplatir | ✅ |
 | Prépresse | 🔜 | Métadonnées (modifier / supprimer) | ✅ |
 | Mesurer des objets | ✅ distances à l'échelle · 🔜 surfaces | Préférences d'affichage | ✅ |
 | Comparer des fichiers | ✅ texte | Plusieurs pages par feuille | ✅ |
 | Contenu multimédia | 🟡 pièces jointes | Changer le format des pages | ✅ |
 | Envoyer pour commentaires | 🔜 collaboration P2P | Réparer | ✅ |
-| Actions guidées (lots) | 🔜 | Signets | ✅ |
-| Préparer l'accessibilité, normes PDF/A | 🔜 | Créer un formulaire à remplir | ✅ |
+| Actions guidées (lots) | ✅ traitement par lots, ZIP | Signets | ✅ |
+| Préparer l'accessibilité, normes PDF/A | 🟡 export PDF/A-2b · accessibilité 🔜 | Créer un formulaire à remplir | ✅ reconnaissance automatique, listes, boutons radio, export Excel |
 | Index de recherche | 🟡 index local du document | JavaScript | non prévu (sécurité) |
 
 ---

@@ -14,6 +14,7 @@ import type { AiSettings } from '../ai/llm';
 import { PiiTool } from './PiiTool';
 import { RefsTool } from './RefsTool';
 import { MoreTools } from './MoreTools';
+import { ProTools } from './ProTools';
 import { Thumb } from './Thumb';
 
 export interface DocCtx {
@@ -38,10 +39,10 @@ export interface DocCtx {
   /** Ouvre le scanner ; avec `onPdf`, le PDF scanné est rendu à l'appelant (ex. insertion dans Organiser). */
   startScan: (onPdf?: (bytes: Uint8Array) => void) => void;
   openPanel: (p: 'organize') => void;
-  openWorkspace: (k: 'organize' | 'split' | 'extract' | 'crop' | 'merge' | 'nup') => void;
+  openWorkspace: (k: 'organize' | 'split' | 'extract' | 'crop' | 'merge' | 'nup' | 'batch') => void;
   /** aller à une page du document ouvert */
   goTo?: (page: number) => void;
-  selectTool: (t: 'edittext' | 'image' | 'move' | 'whiteout' | 'snapshot') => void;
+  selectTool: (t: 'edittext' | 'image' | 'move' | 'whiteout' | 'snapshot' | 'field') => void;
   docId: string;
   annotations: Annotation[];
   replaceKeep: (bytes: Uint8Array, label: string, annotations: Annotation[]) => Promise<void>;
@@ -59,6 +60,7 @@ const CATALOG: { group: string; items: { id: string; label: string; icon: IconNa
       { id: '!move', label: 'Déplacer / redimensionner', icon: 'move', color: ['#ffb340', '#f08c00'], keywords: 'bouger taille' },
       { id: '!whiteout', label: 'Effacer une zone', icon: 'whiteout', color: ['#c7c7cc', '#8e8e93'], keywords: 'blanc correcteur' },
       { id: 'watermark', label: 'Filigrane', icon: 'watermark', color: ['#70d7ff', '#30b0c7'] },
+      { id: 'headerfooter', label: 'En-tête et pied de page', icon: 'hash', color: ['#64d2ff', '#0a84ff'], keywords: 'bates numéro juridique date nom fichier entête' },
       { id: 'pagenum', label: 'Numéroter', icon: 'pagenum', color: ['#98989d', '#6e6e73'], keywords: 'numéros de page' },
       { id: 'bookmarks', label: 'Signets', icon: 'bookmarks', color: ['#ff7b72', '#ff453a'], keywords: 'sommaire' },
       { id: 'attach', label: 'Pièces jointes', icon: 'attach', color: ['#aeaeb2', '#8e8e93'], keywords: 'joindre fichier' },
@@ -84,7 +86,7 @@ const CATALOG: { group: string; items: { id: string; label: string; icon: IconNa
     items: [
       { id: 'create', label: 'Créer un PDF', icon: 'create', color: ['#5fe07a', '#34c759'], keywords: 'images vierge texte' },
       { id: '@scan', label: 'Scanner', icon: 'scan', color: ['#8e8e93', '#636366'], keywords: 'caméra photo' },
-      { id: 'convert', label: 'Convertir', icon: 'convert', color: ['#ff6961', '#ff3b30'], keywords: 'word docx html images' },
+      { id: 'convert', label: 'Convertir', icon: 'convert', color: ['#ff6961', '#ff3b30'], keywords: 'word docx html images excel xlsx tableau powerpoint pptx' },
       { id: 'export', label: 'Exporter', icon: 'export', color: ['#64d2ff', '#32ade6'], keywords: 'png jpg texte markdown' },
       { id: '!snapshot', label: 'Capture', icon: 'snapshot', color: ['#5ac8fa', '#007aff'], keywords: 'capture zone image png copier screenshot' },
       { id: 'ocr', label: 'OCR', icon: 'ocr', color: ['#ffd60a', '#ffcc00'], keywords: 'reconnaissance texte scan cherchable' },
@@ -95,6 +97,8 @@ const CATALOG: { group: string; items: { id: string; label: string; icon: IconNa
     items: [
       { id: 'protect', label: 'Protéger', icon: 'protect', color: ['#409cff', '#0060df'], keywords: 'mot de passe chiffrer' },
       { id: 'unlock', label: 'Déverrouiller', icon: 'unlock', color: ['#5fe07a', '#28a745'], keywords: 'mot de passe' },
+      { id: 'certsign', label: 'Signature numérique', icon: 'sign', color: ['#30d158', '#1f8a3a'], keywords: 'certificat pades p12 pfx eidas électronique' },
+      { id: 'pdfa', label: 'PDF/A (archivage)', icon: 'archive', color: ['#c69c6d', '#8a6a46'], keywords: 'archive norme iso long terme' },
       { id: 'pii', label: 'Anonymiser', icon: 'pii', color: ['#48484a', '#1c1c1e'], keywords: 'données personnelles caviarder rgpd' },
       { id: 'meta', label: 'Propriétés', icon: 'meta', color: ['#aeaeb2', '#636366'], keywords: 'métadonnées auteur titre' },
     ],
@@ -102,6 +106,7 @@ const CATALOG: { group: string; items: { id: string; label: string; icon: IconNa
   {
     group: 'Optimiser et analyser',
     items: [
+      { id: '#batch', label: 'Traitement par lots', icon: 'tools', color: ['#ff9f0a', '#ff6a00'], keywords: 'lot batch plusieurs fichiers masse zip' },
       { id: 'compress', label: 'Compresser', icon: 'compress', color: ['#66d47e', '#30b94d'], keywords: 'réduire taille' },
       { id: 'repair', label: 'Réparer', icon: 'repair', color: ['#ffb340', '#ff8a00'], keywords: 'corrompu' },
       { id: 'compare', label: 'Comparer', icon: 'compare', color: ['#bf8bff', '#8e44ec'], keywords: 'différences versions' },
@@ -460,6 +465,7 @@ export function ToolsPanel({ ctx }: { ctx: DocCtx }) {
       <RefsTool ctx={ctx} />
 
       <MoreTools ctx={ctx} outline={ctx.outline} run={wrap} />
+      <ProTools ctx={ctx} run={wrap} />
     </div>
     </ToolNav.Provider>
   );

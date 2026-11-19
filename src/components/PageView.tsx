@@ -15,7 +15,9 @@ export interface ToolOptions {
   underline: boolean;
   align: TextAlign;
   textBg: string | null; // fond du texte inséré (null = transparent)
-  fieldType: 'text' | 'checkbox' | 'signature';
+  fieldType: 'text' | 'checkbox' | 'signature' | 'dropdown' | 'radio' | 'date' | 'multiline';
+  fieldOptions?: string; // « Oui, Non, Peut-être »
+  radioGroup?: string;
   signer: string; // signataire attendu (demande de signature)
   measureRatio: number; // échelle 1:N (1 = taille réelle)
   measureUnit: 'mm' | 'cm' | 'm' | 'in';
@@ -413,7 +415,16 @@ function PageViewImpl(p: Props) {
     else if (p.tool === 'redact') setDraft({ ...b, kind: 'redact', color: '#000000', opacity: 1, rect: { x, y, w: 0, h: 0 } });
     else if (p.tool === 'whiteout') setDraft({ ...b, kind: 'whiteout', color: '#ffffff', opacity: 1, rect: { x, y, w: 0, h: 0 } });
     else if (p.tool === 'field')
-      setDraft({ ...b, kind: 'field', color: '#3d52d5', opacity: 1, fieldType: p.opts.fieldType, rect: { x, y, w: 0, h: 0 } });
+      setDraft({
+        ...b,
+        kind: 'field',
+        color: '#3d52d5',
+        opacity: 1,
+        fieldType: p.opts.fieldType,
+        options: p.opts.fieldType === 'dropdown' || p.opts.fieldType === 'radio' ? (p.opts.fieldOptions || 'Oui, Non').split(/[,;\n]/).map((x) => x.trim()).filter(Boolean) : undefined,
+        group: p.opts.fieldType === 'radio' ? p.opts.radioGroup || 'Choix' : undefined,
+        rect: { x, y, w: 0, h: 0 },
+      });
     else if (p.tool === 'snapshot') setDraft({ ...b, kind: 'rect', color: '#007aff', strokeWidth: 1.5, opacity: 1, rect: { x, y, w: 0, h: 0 }, _snap: true } as Annotation);
     else setDraft({ ...b, kind: p.tool as 'rect' | 'ellipse', rect: { x, y, w: 0, h: 0 } });
   };
@@ -479,13 +490,26 @@ function PageViewImpl(p: Props) {
       (d.kind === 'ink' && (d.points?.length ?? 0) > 1) ||
       ((d.kind === 'arrow' || d.kind === 'measure') && dist(d.points![0], d.points![1]) > 5);
     if (d.kind === 'field') {
-      if (d.fieldType === 'checkbox' && d.rect) d.rect = { ...d.rect, w: Math.max(d.rect.w, 12), h: Math.max(d.rect.w, 12) };
+      if ((d.fieldType === 'checkbox' || d.fieldType === 'radio') && d.rect) d.rect = { ...d.rect, w: Math.max(d.rect.w, 12), h: Math.max(d.rect.w, 12) };
+      if (d.fieldType === 'radio' && d.rect && (d.options?.length ?? 0) > 1) {
+        // un bouton par choix, alignés verticalement, avec leur libellé
+        const sz = Math.max(12, Math.min(d.rect.w, 18));
+        d.options!.forEach((opt, k) =>
+          p.onAdd({ ...d, id: `${d.id}_${k}`, rect: { x: d.rect!.x, y: d.rect!.y + k * (sz + 8), w: sz, h: sz }, fieldName: d.group, options: [opt], text: opt }),
+        );
+        setDraft(null);
+        return;
+      }
+      const kindName = { checkbox: 'Case', dropdown: 'Liste', radio: 'Choix', date: 'Date', multiline: 'Texte' } as Record<string, string>;
       d.fieldName =
         d.fieldType === 'signature'
           ? `nova_sig:${p.opts.signer || 'Signataire'}:${Math.random().toString(36).slice(2, 6)}`
-          : `${d.fieldType === 'checkbox' ? 'Case' : 'Champ'}_${p.pageIndex + 1}_${Math.random().toString(36).slice(2, 6)}`;
+          : d.fieldType === 'radio'
+            ? d.group
+            : `${kindName[d.fieldType ?? ''] ?? 'Champ'}_${p.pageIndex + 1}_${Math.random().toString(36).slice(2, 6)}`;
+      if (d.fieldType === 'radio') d.text = d.options?.[0];
     }
-    if (big || (d.kind === 'field' && d.fieldType === 'checkbox')) p.onAdd(d);
+    if (big || (d.kind === 'field' && (d.fieldType === 'checkbox' || d.fieldType === 'radio'))) p.onAdd(d);
     setDraft(null);
   };
 
@@ -1016,8 +1040,20 @@ function AnnShape({ a, eraser, onDelete, grab }: { a: Annotation; eraser: boolea
         <g {...common}>
           <rect x={a.rect!.x} y={a.rect!.y} width={a.rect!.w} height={a.rect!.h} fill="rgb(61 82 213 / 0.12)" stroke="#3d52d5" strokeDasharray="3 2" />
           <text x={a.rect!.x + 2} y={a.rect!.y - 2} fontSize={7} fill="#3d52d5" fontFamily="Helvetica, Arial">
-            {a.fieldType === 'checkbox' ? '☐ ' : ''}{a.fieldType === 'signature' ? `✍ Signature : ${a.fieldName?.split(':')[1]}` : a.fieldName}
+            {a.fieldType === 'checkbox' ? '☐ ' : a.fieldType === 'radio' ? '◉ ' : a.fieldType === 'dropdown' ? '▾ ' : a.fieldType === 'date' ? '📅 ' : ''}
+            {a.fieldType === 'signature' ? `✍ Signature : ${a.fieldName?.split(':')[1]}` : a.fieldType === 'radio' ? `${a.fieldName} = ${a.text ?? ''}` : a.fieldName}
           </text>
+          {a.fieldType === 'dropdown' && (
+            <text x={a.rect!.x + 4} y={a.rect!.y + a.rect!.h / 2 + 3} fontSize={Math.min(10, a.rect!.h * 0.6)} fill="#3d52d5" fontFamily="Helvetica, Arial">
+              {(a.options ?? []).join(' · ')}
+            </text>
+          )}
+          {a.fieldType === 'radio' && <circle cx={a.rect!.x + a.rect!.w / 2} cy={a.rect!.y + a.rect!.h / 2} r={a.rect!.w / 2 - 1} fill="#fff" stroke="#3d52d5" />}
+          {a.fieldType === 'radio' && a.text && (
+            <text x={a.rect!.x + a.rect!.w + 4} y={a.rect!.y + a.rect!.h * 0.8} fontSize={Math.max(8, a.rect!.h * 0.75)} fill="#1c1c1e" fontFamily="Helvetica, Arial">
+              {a.text}
+            </text>
+          )}
         </g>
       );
     case 'redact':
