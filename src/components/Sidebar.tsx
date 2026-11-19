@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSortable } from './useSortable';
 import type { PDFDocumentProxy } from '../pdf/engine';
 import type { Annotation, OutlineItem, PageText, SearchHit } from '../types';
 import { allMemories, forgetMemory, type DocMemory } from '../memory';
@@ -20,7 +21,16 @@ interface Props {
   onDelete: (id: string) => void;
   tab: Tab;
   setTab: (t: Tab) => void;
-  onThumbMenu: (e: React.MouseEvent, page: number) => void;
+  onThumbMenu: (e: React.MouseEvent, page: number, selected?: number[]) => void;
+  /** actions de pages directement depuis la colonne Pages */
+  pageActions?: {
+    reorder: (from: number[], to: number) => void;
+    remove: (pages: number[]) => void;
+    rotate: (pages: number[], deg: number) => void;
+    duplicate: (pages: number[]) => void;
+    insert: (at: number, kind: 'pdf' | 'images' | 'scan' | 'blank') => void;
+    organize: () => void;
+  };
 }
 
 const KIND_LABEL: Record<string, string> = {
@@ -58,15 +68,88 @@ export function Sidebar(p: Props) {
   );
 }
 
-function Pages({ doc, numPages, current, goTo, onThumbMenu }: Props) {
+function Pages({ doc, numPages, current, goTo, onThumbMenu, pageActions: act }: Props) {
+  const [sel, setSel] = useState<number[]>([]);
+  const [anchor, setAnchor] = useState<number | null>(null);
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => setSel([]), [doc]);
+  const { st, handle } = useSortable({
+    axis: 'y',
+    container: box,
+    pick: (i) => (sel.includes(i) ? [...sel].sort((a, b) => a - b) : [i]),
+    onDrop: (from, to) => {
+      act?.reorder(from, to);
+      setSel([]);
+    },
+  });
+  const click = (i: number, e: React.MouseEvent) => {
+    if (e.shiftKey && anchor != null) {
+      const [lo, hi] = anchor < i ? [anchor, i] : [i, anchor];
+      setSel(Array.from({ length: hi - lo + 1 }, (_, k) => lo + k));
+      return;
+    }
+    if (e.ctrlKey || e.metaKey) {
+      setSel((l) => (l.includes(i) ? l.filter((x) => x !== i) : [...l, i]));
+      setAnchor(i);
+      return;
+    }
+    setSel([]);
+    setAnchor(i);
+    goTo(i);
+  };
+  const target = sel.length ? sel : [current];
   return (
-    <div className="thumbs">
-      {Array.from({ length: numPages }, (_, i) => (
-        <button key={i} className={`thumb ${i === current ? 'current' : ''}`} onClick={() => goTo(i)} onContextMenu={(e) => onThumbMenu(e, i)}>
-          <Thumb doc={doc} page={i} width={110} />
-          <span>{i + 1}</span>
-        </button>
-      ))}
+    <div
+      className="thumbs-wrap"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (!act) return;
+        if ((e.key === 'Delete' || e.key === 'Backspace') && sel.length) {
+          e.preventDefault();
+          act.remove(sel);
+        } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+          e.preventDefault();
+          setSel(Array.from({ length: numPages }, (_, i) => i));
+        } else if (e.key === 'Escape') setSel([]);
+      }}
+    >
+      {act && (
+        <div className="thumbs-bar">
+          <button title="Insérer des pages après la page affichée ou la sélection" onClick={(e) => onThumbMenu(e, Math.max(...target), target)}>＋</button>
+          <button title="Pivoter à gauche" onClick={() => act.rotate(target, -90)}>↺</button>
+          <button title="Pivoter à droite" onClick={() => act.rotate(target, 90)}>↻</button>
+          <button title="Dupliquer" onClick={() => act.duplicate(target)}>⧉</button>
+          <button title="Supprimer" className="danger" onClick={() => act.remove(target)}>🗑</button>
+          <button title="Organiser toutes les pages en grand" onClick={act.organize}>▦</button>
+          <small className="muted">{sel.length > 1 ? `${sel.length} sélectionnées` : 'Glissez pour classer'}</small>
+        </div>
+      )}
+      <div className="thumbs" ref={box}>
+        {Array.from({ length: numPages }, (_, i) => (
+          <div key={i} className="thumb-slot">
+            {st.dragging && st.insertAt === i && <div className="insert-line" />}
+            <button
+              {...(act ? handle(i) : {})}
+              className={`thumb ${i === current ? 'current' : ''} ${sel.includes(i) ? 'selected' : ''} ${st.dragging?.includes(i) ? 'lifting' : ''}`}
+              onClick={(e) => click(i, e)}
+              onContextMenu={(e) => {
+                const l = sel.includes(i) ? sel : [i];
+                if (!sel.includes(i)) setSel([]);
+                onThumbMenu(e, i, l);
+              }}
+            >
+              <Thumb doc={doc} page={i} width={110} />
+              <span>{i + 1}</span>
+            </button>
+          </div>
+        ))}
+        {st.dragging && st.insertAt === numPages && <div className="insert-line" />}
+      </div>
+      {st.dragging && st.pos && (
+        <div className="drag-badge" style={{ left: st.pos.x + 12, top: st.pos.y + 12 }}>
+          {st.dragging.length > 1 ? `${st.dragging.length} pages` : `Page ${st.dragging[0] + 1}`}
+        </div>
+      )}
     </div>
   );
 }

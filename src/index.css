@@ -965,3 +965,77 @@ svg.sig-pad { width: 100%; height: auto; aspect-ratio: 640 / 220; background: #f
 .pv-side .pv-row { flex-wrap: wrap; }
 .pv-side { overflow-x: hidden; }
 .pv-next canvas { max-width: 100%; height: auto !important; max-height: 34vh; object-fit: contain; }
+
+/* ---- Organiser : insertion ---- */
+.org-grid { min-height: 160px; }
+.org-cell { position: relative; display: flex; align-items: stretch; }
+.org-cell .org-item { flex: 1; }
+.org-slot {
+  position: absolute; top: 20%; bottom: 20%; right: -12px; width: 14px; z-index: 2; padding: 0;
+  border: none; border-radius: 7px; background: transparent; color: transparent; font-weight: 700; cursor: pointer;
+}
+.org-cell > .org-slot:first-child { left: -12px; right: auto; }
+.org-slot:hover, .org-slot.on { background: var(--accent); color: #fff; box-shadow: 0 0 0 3px var(--accent-soft); }
+.organize-panel.big .org-slot { right: -14px; width: 16px; }
+.org-item.inserted { background: color-mix(in srgb, #34c759 8%, transparent); }
+.org-badge { margin-left: 6px; font-style: normal; font-size: 10px; padding: 1px 6px; border-radius: 999px; background: #34c759; color: #fff; }
+.org-actions .primary-soft { background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent); font-weight: 600; }
+.organize-panel .blank { width: auto; }
+
+/* ---- Colonne Pages : sélection, glisser pour classer ---- */
+.thumbs-wrap { display: flex; flex-direction: column; min-height: 0; height: 100%; outline: none; }
+.thumbs-bar { display: flex; align-items: center; gap: 2px; padding: 4px 6px; border-bottom: 1px solid var(--border); flex-wrap: wrap; position: sticky; top: 0; background: var(--panel); z-index: 2; }
+.thumbs-bar button { border: none; background: transparent; color: var(--text); width: 28px; height: 28px; border-radius: 7px; font-size: 15px; cursor: pointer; }
+.thumbs-bar button:hover { background: var(--accent-soft); }
+.thumbs-bar button.danger:hover { background: rgb(255 59 48 / 0.15); }
+.thumbs-bar small { margin-left: 4px; font-size: 11px; }
+.thumbs-wrap .thumbs { flex: 1; overflow-y: auto; }
+.thumb-slot { position: relative; display: flex; flex-direction: column; align-items: center; }
+.thumb { touch-action: pan-y; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.thumb.selected { outline: 3px solid var(--accent); outline-offset: 2px; border-radius: 6px; background: var(--accent-soft); }
+.thumb.lifting { opacity: 0.35; }
+.insert-line { width: 80%; height: 4px; border-radius: 2px; background: var(--accent); margin: 2px 0; box-shadow: 0 0 0 3px var(--accent-soft); }
+.drag-badge { position: fixed; z-index: 4000; pointer-events: none; background: var(--accent); color: #fff; padding: 4px 10px; border-radius: 999px; font-size: 12.5px; font-weight: 600; box-shadow: var(--shadow); }
+.org-insert { position: absolute; left: -9px; top: 4px; bottom: 4px; width: 4px; border-radius: 2px; background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); z-index: 3; }
+.org-insert.end { left: auto; right: -9px; }
+.org-item { touch-action: pan-y; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; cursor: grab; }
+.org-item.dragging { opacity: 0.35; }
+
+/* ---- Minuteur public (question minutée) ---- */
+.ptimer-corner { position: fixed; z-index: 60; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; pointer-events: none; }
+.ptimer-corner.c-tr { top: 18px; right: 22px; } .ptimer-corner.c-tl { top: 18px; left: 22px; align-items: flex-start; }
+.ptimer-corner.c-br { bottom: 18px; right: 22px; } .ptimer-corner.c-bl { bottom: 18px; left: 22px; align-items: flex-start; }
+.pt-count { display: flex; flex-direction: column; align-items: inherit; background: rgb(255 255 255 / 0.92); color: #1c1c1e; padding: 8px 18px; border-radius: 16px; font: 700 clamp(28px, 4.2vw, 64px)/1 ui-rounded, -apple-system, 'SF Pro Rounded', system-ui, sans-serif; font-variant-numeric: tabular-nums; box-shadow: 0 6px 24px rgb(0 0 0 / 0.25); }
+.pt-count small { font-size: 0.32em; font-weight: 600; color: #6e6e73; margin-bottom: 4px; }
+.pt-time { background: rgb(255 255 255 / 0.85); color: #1c1c1e; padding: 4px 12px; border-radius: 10px; font: 600 clamp(16px, 1.8vw, 28px)/1.2 system-ui, sans-serif; font-variant-numeric: tabular-nums; }
+.ptimer-corner.warn .pt-count { color: #ff3b30; animation: pt-pulse 1s ease-in-out infinite; }
+.ptimer-corner.done .pt-count { background: #ff3b30; color: #fff; }
+.ptimer-big { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2vh; background: rgb(250 250 252 / 0.86); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); color: #1c1c1e; pointer-events: none; }
+.pt-label { font: 700 clamp(22px, 3.4vw, 54px)/1.1 system-ui, sans-serif; }
+.pt-ring { position: relative; width: min(56vh, 56vw); aspect-ratio: 1; display: grid; place-items: center; }
+.pt-ring svg { position: absolute; inset: 0; transform: rotate(-90deg); }
+.pt-ring circle { fill: none; stroke-width: 7; }
+.pt-ring .bg { stroke: #e5e5ea; }
+.pt-ring .fg { stroke: #007aff; stroke-linecap: round; transition: stroke-dasharray 0.25s linear; }
+.pt-ring b { font: 800 clamp(48px, 13vh, 180px)/1 ui-rounded, -apple-system, system-ui, sans-serif; font-variant-numeric: tabular-nums; }
+.ptimer-big.warn .fg { stroke: #ff3b30; } .ptimer-big.warn b { color: #ff3b30; }
+.ptimer-big.done b { color: #ff3b30; font-size: clamp(36px, 8vh, 110px); }
+.pt-clock { font: 600 clamp(18px, 3vh, 40px)/1 system-ui, sans-serif; color: #6e6e73; font-variant-numeric: tabular-nums; }
+@keyframes pt-pulse { 50% { transform: scale(1.06); } }
+.timer-ctl { display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.tc-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.tc-left { font: 700 28px/1 ui-rounded, system-ui, sans-serif; font-variant-numeric: tabular-nums; min-width: 84px; }
+.tc-left.warn { color: #ff453a; }
+.timer-ctl input[type=number] { width: 54px; }
+.timer-ctl .tc-label { flex: 1; min-width: 120px; }
+.tc-row.presets button.active { background: #0a84ff; border-color: #0a84ff; color: #fff; }
+.tc-go { background: #30d158 !important; border-color: #30d158 !important; color: #06210f !important; font-weight: 700; }
+.pv-timer { background: #26262c; border-radius: 10px; padding: 8px 10px; }
+.pv-timer summary { cursor: pointer; font-weight: 600; font-size: 13px; }
+.pv-timer .timer-ctl { margin-top: 8px; }
+.pv-side input, .pv-side select { background: #2a2a30; color: #fff; border: 1px solid #3a3a42; border-radius: 6px; padding: 3px 5px; }
+.pv-dur { display: inline-flex; align-items: center; gap: 4px; color: #ddd; }
+.pv-dur input { width: 64px; }
+.pres-timer-pop { position: fixed; bottom: 70px; left: 50%; transform: translateX(-50%); z-index: 70; background: rgb(28 28 30 / 0.96); color: #eee; border-radius: 14px; padding: 12px 14px; width: min(460px, 94vw); box-shadow: 0 10px 40px rgb(0 0 0 / 0.5); }
+.pres-timer-pop button, .pres-timer-pop input, .pres-timer-pop select { background: #2a2a30; color: #fff; border: 1px solid #3a3a42; border-radius: 7px; padding: 3px 8px; }
+.pres-timer-pop .tp-close { margin-top: 8px; width: 100%; }

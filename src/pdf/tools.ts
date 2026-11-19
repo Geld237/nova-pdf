@@ -33,6 +33,31 @@ export async function reorderPages(
   return pdf.save();
 }
 
+/** Assemble des pages venant de plusieurs PDF (0 = document de base, 1… = PDF insérés), avec rotation et pages blanches. */
+export async function assemblePages(
+  base: Uint8Array,
+  sources: Uint8Array[],
+  order: { doc: number; src: number; rotate: number }[],
+): Promise<Uint8Array> {
+  const docs = [await load(base), ...(await Promise.all(sources.map((b) => load(b))))];
+  const out = await PDFDocument.create();
+  // métadonnées du document d'origine conservées
+  const t = docs[0].getTitle();
+  if (t) out.setTitle(t);
+  for (const o of order) {
+    if (o.src < 0) {
+      const n = out.getPageCount();
+      const prev = n ? out.getPage(n - 1).getSize() : { width: 595, height: 842 };
+      out.addPage([prev.width, prev.height]);
+      continue;
+    }
+    const [p] = await out.copyPages(docs[o.doc], [o.src]);
+    out.addPage(p);
+    if (o.rotate) p.setRotation(degrees((p.getRotation().angle + o.rotate + 360) % 360));
+  }
+  return out.save();
+}
+
 export async function extractPages(bytes: Uint8Array, indices: number[]): Promise<Uint8Array> {
   const src = await load(bytes);
   const out = await PDFDocument.create();

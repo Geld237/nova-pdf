@@ -43,8 +43,9 @@ import { TextStyleBar, type TextStyle } from './components/TextStyleBar';
 import { ContextMenu, type MenuItem, type MenuState } from './components/ContextMenu';
 import { Workspace, type WorkspaceKind } from './components/Workspace';
 import { DialogHost, ui } from './dialogs';
-import { download, extractPages, reorderPages, baseName } from './pdf/tools';
-import { renderPageToCanvas, canvasToBlob } from './pdf/engine';
+import { download, extractPages, baseName, assemblePages, imagesToPdf } from './pdf/tools';
+import { identity, movePages, remapAnnotations, type LayoutItem } from './pageLayout';
+import { renderPageToCanvas, canvasToBlob, openPdf } from './pdf/engine';
 import { loadDeck, newCard, saveDeck } from './study';
 
 interface DocState {
@@ -170,7 +171,7 @@ export default function App() {
   }, []);
   const [presenting, setPresenting] = useState(false);
   const [translating, setTranslating] = useState(false);
-  const [scanning, setScanning] = useState(false);
+  const [scanning, setScanning] = useState<boolean | ((bytes: Uint8Array) => void)>(false);
   const [voiceOn, setVoiceOn] = useState(false);
   const [voiceHeard, setVoiceHeard] = useState('');
   const stopVoice = useRef<(() => void) | null>(null);
@@ -338,7 +339,7 @@ export default function App() {
 
       if (existingId) {
         patchDoc(existingId, (d) => ({
-          bytes, pdf, sizes, outline, texts: null, version: d.version + 1, annotations: [], undo: [], redo: [], dirty: true,
+          bytes, pdf, sizes, outline, texts: null, version: d.version + 1, annotations: opts?.annotations ?? [], undo: [], redo: [], dirty: true,
         }));
         extractAllText(pdf).then((texts) => patchDoc(existingId, { texts }));
         const prev = docsRef.current.find((x) => x.id === existingId);
@@ -811,6 +812,13 @@ export default function App() {
           await loadInto(bytes, doc.name, doc.id);
           notify(label);
         },
+        docId: doc.id,
+        annotations: doc.annotations,
+        applyLayout: (items, label, sources) => applyLayout(items, label, sources),
+        replaceKeep: async (bytes, label, annotations) => {
+          await loadInto(bytes, doc.name, doc.id, undefined, undefined, { annotations });
+          notify(label);
+        },
         openNew: (bytes, name) => void loadInto(bytes, name),
         notify,
         outline: doc.outline,
@@ -819,10 +827,14 @@ export default function App() {
         addAnnotations,
         getBytesRaw: async () => doc.bytes,
         markReview: () => patchDoc(doc.id, { review: true }),
-        startScan: () => setScanning(true),
+        startScan: (onPdf) => setScanning(onPdf ? () => onPdf : true),
         openPanel: (p) => setPanel(p),
         openWorkspace: (k) => setWorkspace(k),
         selectTool: (t) => pickTool(t),
+        goTo: (pg) => {
+          setWorkspace(null);
+          setTimeout(() => goTo(pg), 50);
+        },
       }
     : null;
 
@@ -899,35 +911,80 @@ export default function App() {
   };
 
   // ----- Menus contextuels (clic droit) -----------------------------------------
-  const pageOp = async (label: string, fn: (bytes: Uint8Array, n: number) => Promise<Uint8Array>) => {
-    if (!ctx || !doc) return;
+  // ----- Pages : toute modification de pages garde les annotations modifiables (et peut être annulée)
+  const layoutUndo = useRef<Record<string, { bytes: Uint8Array; annotations: Annotation[]; label: string }[]>>({});
+  const applyLayout = async (items: LayoutItem[], label: string, sources: Uint8Array[] = []) => {
+    const d = docsRef.current.find((x) => x.id === activeId);
+    if (!d) return;
+    if (!items.length) return notify('Un document doit garder au moins une page.');
     try {
-      await ctx.replace(await fn(await ctx.getBytes(), doc.sizes.length), label);
+      const bytes = await assemblePages(d.bytes, sources, items);
+      const annotations = remapAnnotations(d.annotations, items, d.sizes);
+      (layoutUndo.current[d.id] ??= []).push({ bytes: d.bytes, annotations: d.annotations, label });
+      if (layoutUndo.current[d.id].length > 20) layoutUndo.current[d.id].shift();
+      await loadInto(bytes, d.name, d.id, undefined, undefined, { annotations });
+      notify(`${label} — Ctrl+Z pour annuler`);
     } catch (e) {
       notify(`Erreur : ${(e as Error).message}`);
     }
   };
-  const order = (n: number) => Array.from({ length: n }, (_, i) => ({ src: i, rotate: 0 }));
-  const rotatePage = (i: number, deg: number) =>
-    pageOp(`Page ${i + 1} pivotée`, (b, n) => reorderPages(b, order(n).map((o) => (o.src === i ? { ...o, rotate: deg } : o))));
-  const deletePage = async (i: number) => {
-    if (!doc || doc.sizes.length < 2) return notify('Impossible de supprimer la seule page.');
-    if (!(await ui.confirm(`Supprimer la page ${i + 1} ?`, { ok: 'Supprimer', danger: true }))) return;
-    pageOp(`Page ${i + 1} supprimée`, (b, n) => reorderPages(b, order(n).filter((o) => o.src !== i)));
+  const undoLayout = async () => {
+    const d = docsRef.current.find((x) => x.id === activeId);
+    const prev = d && layoutUndo.current[d.id]?.pop();
+    if (!d || !prev) return notify('Rien à annuler sur les pages.');
+    await loadInto(prev.bytes, d.name, d.id, undefined, undefined, { annotations: prev.annotations });
+    notify(`Annulé : ${prev.label}`);
   };
-  const insertBlank = (i: number) =>
-    pageOp('Page blanche insérée', (b, n) => {
-      const o = order(n);
-      o.splice(i + 1, 0, { src: -1, rotate: 0 });
-      return reorderPages(b, o);
-    });
-  const duplicatePage = (i: number) =>
-    pageOp(`Page ${i + 1} dupliquée`, (b, n) => {
-      const o = order(n);
-      o.splice(i + 1, 0, { src: i, rotate: 0 });
-      return reorderPages(b, o);
-    });
-  const extractPage = async (i: number) => doc && ctx && download(await extractPages(await ctx.getBytes(), [i]), `${baseName(doc.name)}-p${i + 1}.pdf`);
+  const nPages = () => docsRef.current.find((x) => x.id === activeId)?.sizes.length ?? 0;
+  const pagesLabel = (l: number[]) => (l.length > 1 ? `${l.length} pages` : `Page ${l[0] + 1}`);
+  const rotatePages = (l: number[], deg: number) =>
+    applyLayout(identity(nPages()).map((o) => (l.includes(o.src) ? { ...o, rotate: deg } : o)), `${pagesLabel(l)} pivotée(s)`);
+  const deletePages = async (l: number[]) => {
+    if (l.length >= nPages()) return notify('Un document doit garder au moins une page.');
+    if (!(await ui.confirm(l.length > 1 ? `Supprimer ces ${l.length} pages ?` : `Supprimer la page ${l[0] + 1} ?`, { ok: 'Supprimer', danger: true }))) return;
+    applyLayout(identity(nPages()).filter((o) => !l.includes(o.src)), `${pagesLabel(l)} supprimée(s)`);
+  };
+  const insertBlank = (i: number) => {
+    const o = identity(nPages());
+    o.splice(i + 1, 0, { doc: 0, src: -1, rotate: 0 });
+    applyLayout(o, 'Page blanche insérée');
+  };
+  const duplicatePages = (l: number[]) =>
+    applyLayout(identity(nPages()).flatMap((o) => (l.includes(o.src) ? [o, { ...o }] : [o])), `${pagesLabel(l)} dupliquée(s)`);
+  const reorderTo = (from: number[], to: number) => applyLayout(movePages(identity(nPages()), from, to), `${pagesLabel(from)} déplacée(s)`);
+  /** Insère d'autres pages (PDF, images, scan) à la position `at`. */
+  const insertFrom = async (at: number, kind: 'pdf' | 'images' | 'scan') => {
+    const put = async (bytes: Uint8Array, what: string) => {
+      const src = await openPdf(bytes, () => ui.prompt('Mot de passe du document à insérer :', '', { password: true }));
+      const o = identity(nPages());
+      o.splice(at, 0, ...Array.from({ length: src.numPages }, (_, i) => ({ doc: 1, src: i, rotate: 0 })));
+      await applyLayout(o, `${src.numPages} page(s) insérée(s) depuis ${what}`, [bytes]);
+    };
+    if (kind === 'scan') return setScanning(() => (b: Uint8Array) => put(b, 'le scanner'));
+    const i = document.createElement('input');
+    i.type = 'file';
+    i.multiple = true;
+    i.accept = kind === 'pdf' ? 'application/pdf,.pdf' : 'image/*';
+    i.onchange = async () => {
+      const files = [...(i.files ?? [])];
+      if (!files.length) return;
+      try {
+        if (kind === 'images') {
+          await put(await imagesToPdf(files), files.length > 1 ? `${files.length} images` : files[0].name);
+        } else for (const f of files.reverse()) await put(new Uint8Array(await f.arrayBuffer()), f.name);
+      } catch (e) {
+        notify(`Insertion impossible : ${(e as Error).message}`);
+      }
+    };
+    clickInput(i);
+  };
+  const extractPagesTo = async (l: number[], tab: boolean) => {
+    if (!doc || !ctx) return;
+    const b = await extractPages(await ctx.getBytes(), [...l].sort((x, y) => x - y));
+    const name = `${baseName(doc.name)}-pages-${l.map((x) => x + 1).join('-').slice(0, 30)}.pdf`;
+    if (tab) loadInto(b, name);
+    else download(b, name);
+  };
   const exportPage = async (i: number) => doc && download(await canvasToBlob(await renderPageToCanvas(doc.pdf, i, 2)), `${baseName(doc.name)}-p${i + 1}.png`, 'image/png');
   const speak = (t: string) => {
     speechSynthesis.cancel();
@@ -940,19 +997,42 @@ export default function App() {
     setTimeout(() => window.dispatchEvent(new CustomEvent('nova:ai', { detail: { action, text } })), 120);
   };
 
-  const pageMenuItems = (i: number): MenuItem[] => [
-    { header: `Page ${i + 1}` },
-    { label: 'Pivoter à droite', icon: 'rotateCw', action: () => rotatePage(i, 90) },
-    { label: 'Pivoter à gauche', icon: 'rotateCcw', action: () => rotatePage(i, -90) },
-    { label: 'Dupliquer la page', icon: 'copy', action: () => duplicatePage(i) },
-    { label: 'Insérer une page blanche après', icon: 'create', action: () => insertBlank(i) },
-    { label: 'Extraire en PDF', icon: 'extract', action: () => extractPage(i) },
-    { label: 'Exporter en image', icon: 'picture', action: () => exportPage(i) },
-    { label: 'Copier le texte de la page', icon: 'file', disabled: !doc?.texts, action: () => navigator.clipboard?.writeText(doc?.texts?.[i]?.text ?? '') },
-    { label: 'Lire la page à voix haute', icon: 'speak', disabled: !doc?.texts, action: () => speak(doc?.texts?.[i]?.text ?? '') },
-    'sep',
-    { label: 'Supprimer la page', icon: 'trash', danger: true, action: () => deletePage(i) },
-  ];
+  /** Menu d'une page (ou de plusieurs pages sélectionnées dans la colonne Pages). */
+  const pageMenuItems = (i: number, sel: number[] = [i]): MenuItem[] => {
+    const l = sel.includes(i) ? sel : [i];
+    const many = l.length > 1;
+    const last = Math.max(...l);
+    const first = Math.min(...l);
+    const n = nPages();
+    return [
+      { header: many ? `${l.length} pages sélectionnées` : `Page ${i + 1}` },
+      { label: 'Insérer après : pages d’un autre PDF…', icon: 'merge', action: () => insertFrom(last + 1, 'pdf') },
+      { label: 'Insérer après : image(s)…', icon: 'image', action: () => insertFrom(last + 1, 'images') },
+      { label: 'Insérer après : scanner…', icon: 'scan', action: () => insertFrom(last + 1, 'scan') },
+      { label: 'Insérer une page blanche après', icon: 'create', action: () => insertBlank(last) },
+      { label: 'Insérer avant : pages d’un autre PDF…', icon: 'merge', action: () => insertFrom(first, 'pdf') },
+      'sep',
+      { label: 'Pivoter à droite', icon: 'rotateCw', action: () => rotatePages(l, 90) },
+      { label: 'Pivoter à gauche', icon: 'rotateCcw', action: () => rotatePages(l, -90) },
+      { label: many ? 'Dupliquer ces pages' : 'Dupliquer la page', icon: 'copy', action: () => duplicatePages(l) },
+      { label: 'Déplacer au début', icon: 'back', disabled: first === 0 && !many, action: () => reorderTo(l, 0) },
+      { label: 'Déplacer à la fin', icon: 'next', disabled: last === n - 1 && !many, action: () => reorderTo(l, n) },
+      'sep',
+      { label: many ? 'Extraire ces pages (PDF)…' : 'Extraire en PDF', icon: 'extract', action: () => extractPagesTo(l, false) },
+      { label: 'Ouvrir dans un nouvel onglet', icon: 'open', action: () => extractPagesTo(l, true) },
+      ...(!many
+        ? [
+            { label: 'Exporter en image', icon: 'picture' as IconName, action: () => exportPage(i) },
+            { label: 'Copier le texte de la page', icon: 'file' as IconName, disabled: !doc?.texts, action: () => navigator.clipboard?.writeText(doc?.texts?.[i]?.text ?? '') },
+            { label: 'Lire la page à voix haute', icon: 'speak' as IconName, disabled: !doc?.texts, action: () => speak(doc?.texts?.[i]?.text ?? '') },
+          ]
+        : []),
+      { label: 'Organiser toutes les pages en grand…', icon: 'organize', action: () => setWorkspace('organize') },
+      { label: 'Annuler la dernière modification de pages', icon: 'undo', disabled: !layoutUndo.current[activeId ?? '']?.length, action: undoLayout },
+      'sep',
+      { label: many ? `Supprimer ces ${l.length} pages` : 'Supprimer la page', icon: 'trash', danger: true, action: () => deletePages(l) },
+    ];
+  };
 
   const onViewerMenu = (e: React.MouseEvent) => {
     if (!doc) return;
@@ -1062,9 +1142,9 @@ export default function App() {
     setMenu({ x: e.clientX, y: e.clientY, items });
   };
 
-  const onThumbMenu = (e: React.MouseEvent, i: number) => {
+  const onThumbMenu = (e: React.MouseEvent, i: number, sel: number[] = [i]) => {
     e.preventDefault();
-    setMenu({ x: e.clientX, y: e.clientY, items: [{ label: 'Aller à la page', icon: 'pages', action: () => goTo(i) }, 'sep', ...pageMenuItems(i)] });
+    setMenu({ x: e.clientX, y: e.clientY, items: [{ label: 'Aller à la page', icon: 'pages', action: () => goTo(i) }, 'sep', ...pageMenuItems(i, sel)] });
   };
 
   /** Clic droit sur un document de la bibliothèque ou des récents. */
@@ -1216,7 +1296,13 @@ export default function App() {
       if (mod && e.shiftKey && e.key.toLowerCase() === 'f') { e.preventDefault(); setFocus((f) => !f); return; }
       if (mod && e.key.toLowerCase() === 'f') { e.preventDefault(); setSidebar(true); setSideTab('search'); return; }
       if (typing) return;
-      if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
+      if (mod && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        // juste après une modification de pages (rien d'autre à annuler) : on annule la modification de pages
+        if (!e.shiftKey && !doc.undo.length && layoutUndo.current[doc.id]?.length) return void undoLayout();
+        e.shiftKey ? redo() : undo();
+        return;
+      }
       if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
       if (mod && (e.key === '+' || e.key === '=')) { e.preventDefault(); zoom(1.15); return; }
       if (mod && e.key === '-') { e.preventDefault(); zoom(1 / 1.15); return; }
@@ -1602,6 +1688,14 @@ export default function App() {
             tab={sideTab}
             setTab={setSideTab}
             onThumbMenu={onThumbMenu}
+            pageActions={{
+              reorder: reorderTo,
+              remove: deletePages,
+              rotate: rotatePages,
+              duplicate: duplicatePages,
+              insert: (at, kind) => (kind === 'blank' ? insertBlank(at - 1) : insertFrom(at, kind)),
+              organize: () => setWorkspace('organize'),
+            }}
           />
         )}
 
@@ -1917,7 +2011,9 @@ export default function App() {
         <ScanModal
           onClose={() => setScanning(false)}
           onDone={async (bytes) => {
+            const cb = scanning;
             setScanning(false);
+            if (typeof cb === 'function') return cb(bytes); // scan inséré dans un document
             await loadInto(bytes, `scan-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.pdf`);
             notify('Scan créé. Lancez l’OCR (Outils) pour le rendre cherchable.');
           }}

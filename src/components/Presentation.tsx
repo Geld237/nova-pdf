@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PDFDocumentProxy } from '../pdf/engine';
 import type { Annotation } from '../types';
 import type { PresentMsg } from './Audience';
+import { DEFAULT_TIMER, TimerControls, TimerOverlay, type TimerState } from './PublicTimer';
 import { closeAudience, hasSecondScreen, listScreens, moveAudience, openAudience, openChannel, putPresentDoc, type Channel, type ScreenInfo } from '../present';
 
 interface Props {
@@ -41,6 +42,19 @@ export function Presentation({ pdf, start, onExit, bytes, fingerprint, annotatio
   const [screens, setScreens] = useState<ScreenInfo[]>([]);
   const [audScreen, setAudScreen] = useState<ScreenInfo | null>(null);
   const [grid, setGrid] = useState(false);
+  const [qTimer, setQTimer] = useState<TimerState>(() => {
+    try {
+      return { ...DEFAULT_TIMER, ...JSON.parse(localStorage.getItem('nova:public-timer') ?? '{}'), endsAt: null };
+    } catch {
+      return DEFAULT_TIMER;
+    }
+  });
+  useEffect(() => {
+    const { endsAt: _e, ...keep } = qTimer;
+    void _e;
+    localStorage.setItem('nova:public-timer', JSON.stringify({ ...keep, left: qTimer.total }));
+  }, [qTimer]);
+  const [timerPop, setTimerPop] = useState(false);
   const switching = useRef(false);
   const n = pdf.numPages;
 
@@ -114,8 +128,8 @@ export function Presentation({ pdf, start, onExit, bytes, fingerprint, annotatio
     [],
   );
   useEffect(() => {
-    chan.current?.post({ type: 'state', page, blank, laser: laser ? rpos : null, ink: ink[page] ?? [] } satisfies PresentMsg);
-  }, [page, blank, laser, rpos, ink, presenter]);
+    chan.current?.post({ type: 'state', page, blank, laser: laser ? rpos : null, ink: ink[page] ?? [], timer: qTimer } satisfies PresentMsg);
+  }, [page, blank, laser, rpos, ink, presenter, qTimer]);
 
   // notes de l'orateur : enregistrées par page, préremplies avec les notes posées sur la page
   const noteKey = `nova:speaker:${fingerprint ?? 'doc'}:${page}`;
@@ -299,15 +313,21 @@ export function Presentation({ pdf, start, onExit, bytes, fingerprint, annotatio
             </div>
           </div>
           <div className="pv-row">
-            <label>
+            <label title="Durée de la présentation, en minutes (n’importe quelle valeur)">
               Durée prévue
-              <select value={target} onChange={(e) => setTarget(+e.target.value)}>
-                <option value={0}>—</option>
-                {[5, 10, 15, 20, 30, 45, 60, 90].map((m) => <option key={m} value={m}>{m} min</option>)}
-              </select>
+              <span className="pv-dur">
+                <input type="number" min={0} max={600} step={1} list="nova-durations" value={target || ''} placeholder="—" onChange={(e) => setTarget(Math.max(0, +e.target.value || 0))} /> min
+              </span>
+              <datalist id="nova-durations">
+                {[5, 10, 15, 20, 30, 45, 60, 90].map((m) => <option key={m} value={m} />)}
+              </datalist>
             </label>
             <button onClick={() => setT0(Date.now())}>↺ Remettre à zéro</button>
           </div>
+          <details className="pv-timer" open={qTimer.mode !== 'off' || qTimer.endsAt != null}>
+            <summary>⏱ Minuteur pour le public (question minutée…)</summary>
+            <TimerControls t={qTimer} set={setQTimer} />
+          </details>
           <div className="pv-next">
             <small>Diapositive suivante</small>
             {page + 1 < n ? <canvas ref={nextCanvas} onClick={() => go(page + 1)} /> : <div className="pv-end">Fin de la présentation</div>}
@@ -349,8 +369,16 @@ export function Presentation({ pdf, start, onExit, bytes, fingerprint, annotatio
     <div ref={root} className="presentation">
       {slide}
       {grid && <SlideGrid pdf={pdf} current={page} onPick={(i) => { go(i); setGrid(false); }} onClose={() => setGrid(false)} />}
+      <TimerOverlay t={qTimer} />
+      {timerPop && (
+        <div className="pres-timer-pop" onPointerDown={(e) => e.stopPropagation()}>
+          <TimerControls t={qTimer} set={setQTimer} compact />
+          <button className="tp-close" onClick={() => setTimerPop(false)}>Fermer</button>
+        </div>
+      )}
       {hud && (
         <div className="pres-hud">
+          <button className={qTimer.mode !== 'off' || qTimer.clock ? 'active' : ''} onClick={() => setTimerPop((v) => !v)} title="Minuteur / horloge à l’écran">⏱ Minuteur</button>
           {tools}
           <span>⏱ {fmt(elapsed)}</span>
           {bytes && <button onClick={() => startPresenter()} title="Vue présentateur sur cet écran, diapositives sur le 2e écran (V)">🖥 Présentateur</button>}

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { openPdf, type PDFDocumentProxy } from '../pdf/engine';
 import { getPresentDoc, openChannel } from '../present';
 import { isTauri } from '../platform';
+import { TimerOverlay, type TimerState } from './PublicTimer';
 
 /* Fenêtre « public » de la vue présentateur : affiche seulement la diapositive, plein écran,
    pilotée par la fenêtre principale via BroadcastChannel. */
@@ -10,7 +11,7 @@ export type PresentMsg =
   | { type: 'ready' }
   | { type: 'doc' } // le document est dans le stockage local (getPresentDoc)
   | { type: 'key'; key: string } // touche / clic reçu par la fenêtre public (télécommande, clavier)
-  | { type: 'state'; page: number; blank: 'black' | 'white' | null; laser: [number, number] | null; ink: [number, number][][] }
+  | { type: 'state'; page: number; blank: 'black' | 'white' | null; laser: [number, number] | null; ink: [number, number][][]; timer?: TimerState }
   | { type: 'close' };
 
 export const PRESENT_CHANNEL = 'nova-present';
@@ -108,6 +109,7 @@ export function Audience() {
       )}
       {box && st.laser && <div className="laser" style={{ left: box.left + st.laser[0] * box.width, top: box.top + st.laser[1] * box.height }} />}
       {st.blank && <div className={`blank-screen ${st.blank}`} />}
+      {st.timer && <TimerOverlay t={st.timer} />}
     </div>
   );
 }

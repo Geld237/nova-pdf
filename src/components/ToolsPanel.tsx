@@ -35,10 +35,18 @@ export interface DocCtx {
   /** Octets du document sans les annotations en cours. */
   getBytesRaw: () => Promise<Uint8Array>;
   markReview: () => void;
-  startScan: () => void;
+  /** Ouvre le scanner ; avec `onPdf`, le PDF scanné est rendu à l'appelant (ex. insertion dans Organiser). */
+  startScan: (onPdf?: (bytes: Uint8Array) => void) => void;
   openPanel: (p: 'organize') => void;
   openWorkspace: (k: 'organize' | 'split' | 'extract' | 'crop' | 'merge' | 'nup') => void;
+  /** aller à une page du document ouvert */
+  goTo?: (page: number) => void;
   selectTool: (t: 'edittext' | 'image' | 'move' | 'whiteout' | 'snapshot') => void;
+  docId: string;
+  annotations: Annotation[];
+  replaceKeep: (bytes: Uint8Array, label: string, annotations: Annotation[]) => Promise<void>;
+  /** Nouvelle disposition des pages ; les annotations suivent leurs pages et restent modifiables. */
+  applyLayout: (items: { doc: number; src: number; rotate: number }[], label: string, sources?: Uint8Array[]) => Promise<void>;
 }
 
 /** Catalogue des outils : icône, couleur de tuile (dégradé façon iOS) et groupe. */
@@ -64,7 +72,8 @@ const CATALOG: { group: string; items: { id: string; label: string; icon: IconNa
       { id: '#merge', label: 'Fusionner', icon: 'merge', color: ['#5ac8fa', '#007aff'], keywords: 'combiner joindre' },
       { id: '#split', label: 'Découper', icon: 'split', color: ['#ffb340', '#ff9500'], keywords: 'diviser séparer' },
       { id: '#extract', label: 'Extraire des pages', icon: 'extract', color: ['#4cd9c0', '#00c7be'] },
-      { id: '#organize', label: 'Organiser les pages', icon: 'organize', color: ['#7d7aff', '#5856d6'], keywords: 'trier pivoter supprimer réordonner' },
+      { id: '#organize', label: 'Insérer des pages', icon: 'create', color: ['#30d158', '#248a3d'], keywords: 'ajouter insérer page blanche image scan pdf' },
+      { id: '#organize', label: 'Organiser les pages', icon: 'organize', color: ['#7d7aff', '#5856d6'], keywords: 'trier pivoter supprimer réordonner insérer ajouter' },
       { id: '#nup', label: 'Pages par feuille', icon: 'grid', color: ['#a28bff', '#7a5af8'], keywords: 'imposition' },
       { id: 'resize', label: 'Format des pages', icon: 'resize', color: ['#da8fff', '#af52de'], keywords: 'a4 letter taille' },
       { id: '#crop', label: 'Recadrer', icon: 'crop', color: ['#ff6b9a', '#ff2d55'], keywords: 'rogner marges' },
@@ -188,7 +197,7 @@ export function ToolsPanel({ ctx }: { ctx: DocCtx }) {
               <div key={g.group} className="tool-group">
                 <h3 className="group">{g.group}</h3>
                 <div className="tool-grid">
-                  {items.map((t) => <ToolTile key={t.id} t={t} onClick={() => open(t.id)} />)}
+                  {items.map((t) => <ToolTile key={t.id + t.label} t={t} onClick={() => open(t.id)} />)}
                 </div>
               </div>
             );
